@@ -6,6 +6,7 @@ public class TreeObject : BaseObject
 {
     protected virtual void Awake()
     {
+        base.Awake();
         maxHp = 3;
         hp = maxHp;
         maxMp = 0;
