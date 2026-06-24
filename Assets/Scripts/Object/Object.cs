@@ -68,12 +68,19 @@ public class BaseObject : MonoBehaviour
 
         if (objectCollider == null)
         {
-            Debug.LogError($"[BaseObject] Collider2D is missing on {gameObject.name} or any of its children!");
+            // Try to add a child object with BoxCollider2D to support hover and satisfy BaseObject requirements
+            GameObject colliderHolder = new GameObject("Collider2D_Holder");
+            colliderHolder.transform.SetParent(transform, false);
+            BoxCollider2D boxCol = colliderHolder.AddComponent<BoxCollider2D>();
+            if (spriteRenderer != null && spriteRenderer.sprite != null)
+            {
+                boxCol.size = spriteRenderer.sprite.bounds.size;
+            }
+            objectCollider = boxCol;
+            Debug.Log($"[BaseObject] Automatically created 2D Collider child holder for {gameObject.name} with size {boxCol.size}");
         }
-        else
-        {
-            objectCollider.isTrigger = true;
-        }
+
+        objectCollider.isTrigger = true;
 
         nameTextComponent = GetComponentInChildren<TMP_Text>();
         UpdateNameText();
