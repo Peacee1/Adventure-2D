@@ -16,10 +16,20 @@ public class Player : BaseObject
     private Rigidbody2D rb;
     private Vector2 moveInput;
     private bool isDashing = false;
+    private bool isAttacking = false;
     private float lastDashTime = -999f;
     private Vector3 dashDirection;
     private float lastLogTime = -999f;
     private Vector2 rbVelocity;
+
+    [Header("Attack Settings")]
+    [SerializeField] private float attackDuration = 0.4f;
+
+    [Header("Rotation Settings")]
+    [SerializeField] private float rotationSpeed = 360f; // degrees per second
+    private GameObject colliderObject;
+    private GameObject dashTrailObject;
+    private Animator animatorComponent;
 
     protected override void Awake()
     {
@@ -38,8 +48,16 @@ public class Player : BaseObject
         {
             rb = gameObject.AddComponent<Rigidbody2D>();
         }
-        rb.gravityScale = 0f;
-        rb.constraints = RigidbodyConstraints2D.FreezeRotation;
+
+        if (rb != null)
+        {
+            rb.gravityScale = 0f;
+            rb.constraints = RigidbodyConstraints2D.FreezeRotation;
+        }
+        else
+        {
+            Debug.LogError("[Player] Failed to get or add Rigidbody2D component!");
+        }
 
         // Automatically create a non-trigger BoxCollider2D on the root for solid physical wall collisions
         BoxCollider2D physicalCollider = gameObject.AddComponent<BoxCollider2D>();
@@ -78,6 +96,93 @@ public class Player : BaseObject
         }
     }
 
+    private void Start()
+    {
+        FindBoxColliderObject();
+        FindDashTrailObject();
+        if (colliderObject != null)
+        {
+            colliderObject.transform.localRotation = Quaternion.identity;
+            animatorComponent = colliderObject.GetComponent<Animator>();
+        }
+    }
+
+    private void FindDashTrailObject()
+    {
+        // 1. Try to find the child 0 of Square GameObject directly
+        Transform squareTransform = transform.Find("Square");
+        if (squareTransform != null)
+        {
+            if (squareTransform.childCount > 0)
+            {
+                dashTrailObject = squareTransform.GetChild(0).gameObject;
+                Debug.Log($"[Player] Found dash trail: {dashTrailObject.name} as child of Square.");
+            }
+        }
+
+        // 2. Fall back to child 0 of colliderObject if not found yet
+        if (dashTrailObject == null && colliderObject != null && colliderObject.transform.childCount > 0)
+        {
+            dashTrailObject = colliderObject.transform.GetChild(0).gameObject;
+            Debug.Log($"[Player] Found dash trail: {dashTrailObject.name} as child of colliderObject.");
+        }
+
+        // 3. Set the trail object to inactive initially
+        if (dashTrailObject != null)
+        {
+            dashTrailObject.SetActive(false);
+        }
+        else
+        {
+            Debug.LogWarning("[Player] No dash trail object found (child 0 of Square or child 0 of colliderObject)!");
+        }
+    }
+
+    private void FindBoxColliderObject()
+    {
+        // 1. Search in children first (excluding this GameObject)
+        BoxCollider2D[] allBox2D = GetComponentsInChildren<BoxCollider2D>();
+        foreach (var col in allBox2D)
+        {
+            if (col.gameObject != gameObject)
+            {
+                colliderObject = col.gameObject;
+                Debug.Log($"[Player] Found BoxCollider2D on child GameObject: {colliderObject.name}");
+                return;
+            }
+        }
+
+        BoxCollider[] allBox3D = GetComponentsInChildren<BoxCollider>();
+        foreach (var col in allBox3D)
+        {
+            if (col.gameObject != gameObject)
+            {
+                colliderObject = col.gameObject;
+                Debug.Log($"[Player] Found BoxCollider on child GameObject: {colliderObject.name}");
+                return;
+            }
+        }
+
+        // 2. If not found in children, search on this GameObject itself
+        BoxCollider2D selfBox2D = GetComponent<BoxCollider2D>();
+        if (selfBox2D != null)
+        {
+            colliderObject = selfBox2D.gameObject;
+            Debug.Log($"[Player] Found BoxCollider2D on root GameObject: {colliderObject.name}");
+            return;
+        }
+
+        BoxCollider selfBox3D = GetComponent<BoxCollider>();
+        if (selfBox3D != null)
+        {
+            colliderObject = selfBox3D.gameObject;
+            Debug.Log($"[Player] Found BoxCollider on root GameObject: {colliderObject.name}");
+            return;
+        }
+        
+        Debug.LogWarning("[Player] No BoxCollider or BoxCollider2D found in children or root GameObject!");
+    }
+
     private void Update()
     {
         HandleInput();
@@ -86,9 +191,47 @@ public class Player : BaseObject
         {
             rbVelocity = (Vector2)dashDirection * dashSpeed;
         }
+        else if (isAttacking)
+        {
+            // Khóa di chuyển trong lúc attack
+            rbVelocity = Vector2.zero;
+        }
         else
         {
             rbVelocity = moveInput.normalized * moveSpeed;
+        }
+
+        // Update animator speed based on movement status instead of rotating the collider
+        if (colliderObject != null)
+        {
+            if (animatorComponent == null)
+            {
+                animatorComponent = colliderObject.GetComponent<Animator>();
+            }
+
+            if (animatorComponent != null)
+            {
+                bool isMoving = rbVelocity.sqrMagnitude > 0.01f;
+                animatorComponent.SetFloat("speed", isMoving ? 1f : 0f);
+            }
+        }
+
+        // Rotate character based on left/right movement direction
+        if (rbVelocity.x < -0.01f)
+        {
+            transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            if (nameTextComponent != null)
+            {
+                nameTextComponent.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+            }
+        }
+        else if (rbVelocity.x > 0.01f)
+        {
+            transform.localRotation = Quaternion.identity;
+            if (nameTextComponent != null)
+            {
+                nameTextComponent.transform.localRotation = Quaternion.identity;
+            }
         }
 
         // Log diagnostics every 2 seconds to debug visibility
@@ -123,7 +266,7 @@ public class Player : BaseObject
         }
 
         // 2. Dash via Right Click using the new Input System Mouse polling
-        if (Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame)
+        if (Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame && !isAttacking)
         {
             TryDash();
         }
@@ -158,14 +301,42 @@ public class Player : BaseObject
         isDashing = true;
         lastDashTime = Time.time;
 
+        if (dashTrailObject != null)
+        {
+            dashTrailObject.SetActive(true);
+        }
+
         yield return new WaitForSeconds(dashDuration);
 
         isDashing = false;
+
+        if (dashTrailObject != null)
+        {
+            dashTrailObject.SetActive(false);
+        }
     }
 
     public virtual void Attack()
     {
-        Debug.Log("[Player] Attack triggered (method is currently empty).");
-        // Hàm attack tạm thời bỏ trống theo yêu cầu
+        if (isAttacking) return;
+
+        if (animatorComponent != null)
+        {
+            animatorComponent.SetTrigger("attack");
+            Debug.Log("[Player] Attack triggered - animator trigger 'attack' set.");
+        }
+        else
+        {
+            Debug.LogWarning("[Player] Attack triggered but animatorComponent is null!");
+        }
+
+        StartCoroutine(AttackLockRoutine());
+    }
+
+    private IEnumerator AttackLockRoutine()
+    {
+        isAttacking = true;
+        yield return new WaitForSeconds(attackDuration);
+        isAttacking = false;
     }
 }
