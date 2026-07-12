@@ -14,20 +14,24 @@ import (
 type TCPServer struct {
 	addr        string
 	roomManager *room.Manager
+	dbRepo      player.Repository
 
-	loginHandler  *handler.LoginHandler
-	roomHandler   *handler.RoomHandler
-	attackHandler *handler.AttackHandler
+	loginHandler    *handler.LoginHandler
+	registerHandler *handler.RegisterHandler
+	roomHandler     *handler.RoomHandler
+	attackHandler   *handler.AttackHandler
 }
 
 // NewTCPServer tạo TCP server.
-func NewTCPServer(addr string, rm *room.Manager) *TCPServer {
+func NewTCPServer(addr string, rm *room.Manager, repo player.Repository) *TCPServer {
 	return &TCPServer{
-		addr:          addr,
-		roomManager:   rm,
-		loginHandler:  handler.NewLoginHandler(rm),
-		roomHandler:   handler.NewRoomHandler(rm),
-		attackHandler: handler.NewAttackHandler(rm),
+		addr:            addr,
+		roomManager:     rm,
+		dbRepo:          repo,
+		loginHandler:    handler.NewLoginHandler(rm, repo),
+		registerHandler: handler.NewRegisterHandler(repo),
+		roomHandler:     handler.NewRoomHandler(rm),
+		attackHandler:   handler.NewAttackHandler(rm),
 	}
 }
 
@@ -59,6 +63,12 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 	sess.OnPacket = s.dispatch
 	sess.OnDisconnect = func(sess *player.Session) {
 		s.roomHandler.HandleLeave(sess.Player.ID)
+		// Lưu trạng thái người chơi vào DB khi ngắt kết nối
+		if sess.Player.ID != 0 {
+			if err := s.dbRepo.Save(sess.Player); err != nil {
+				log.Printf("[TCP] Lỗi khi lưu trạng thái người chơi %s: %v", sess.Player.Username, err)
+			}
+		}
 	}
 
 	sess.Start() // blocking
@@ -71,6 +81,9 @@ func (s *TCPServer) dispatch(pTypeRaw uint16, payload []byte, sess *player.Sessi
 	switch pType {
 	case packet.TypeLoginReq:
 		s.loginHandler.Handle(payload, sess)
+
+	case packet.TypeRegisterReq:
+		s.registerHandler.Handle(payload, sess)
 
 	case packet.TypeJoinRoomReq:
 		s.roomHandler.HandleJoin(payload, sess)

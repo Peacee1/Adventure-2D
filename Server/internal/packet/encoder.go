@@ -181,6 +181,13 @@ func EncodePong(p PongPacket) []byte {
 	return EncodeFrame(TypePong, buf.Bytes())
 }
 
+func EncodeRegisterAck(p RegisterAckPacket) []byte {
+	buf := &bytes.Buffer{}
+	writeBool(buf, p.Success)
+	writeString(buf, p.Message)
+	return EncodeFrame(TypeRegisterAck, buf.Bytes())
+}
+
 // ── Decoders ──────────────────────────────────────────────────────────────────
 
 func DecodeLoginReq(payload []byte) (LoginReqPacket, error) {
@@ -188,7 +195,17 @@ func DecodeLoginReq(payload []byte) (LoginReqPacket, error) {
 	var p LoginReqPacket
 	var err error
 	if p.Username, err = readString(r); err != nil { return p, err }
-	if p.Token, err = readString(r); err != nil { return p, err }
+	if p.Password, err = readString(r); err != nil { return p, err }
+	if p.Slot,     err = readUint8(r);  err != nil { return p, err }
+	return p, nil
+}
+
+func DecodeRegisterReq(payload []byte) (RegisterReqPacket, error) {
+	r := bytes.NewReader(payload)
+	var p RegisterReqPacket
+	var err error
+	if p.Username, err = readString(r); err != nil { return p, err }
+	if p.Password, err = readString(r); err != nil { return p, err }
 	return p, nil
 }
 

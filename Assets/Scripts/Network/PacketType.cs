@@ -4,8 +4,10 @@ using System;
 public enum PacketType : ushort
 {
     // Auth
-    LoginReq  = 0x0001,
-    LoginAck  = 0x0002,
+    LoginReq    = 0x0001,
+    LoginAck    = 0x0002,
+    RegisterReq = 0x0003,
+    RegisterAck = 0x0004,
 
     // Room
     JoinRoomReq  = 0x0010,

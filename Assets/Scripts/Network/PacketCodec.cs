@@ -26,12 +26,21 @@ public static class PacketEncoder
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
-    public static byte[] EncodeLoginReq(string username, string token = "")
+    public static byte[] EncodeLoginReq(string username, string password, byte slot)
     {
         using var ms = new MemoryStream();
         WriteString(ms, username);
-        WriteString(ms, token);
+        WriteString(ms, password);
+        ms.WriteByte(slot);
         return MakeFrame(PacketType.LoginReq, ms.ToArray());
+    }
+
+    public static byte[] EncodeRegisterReq(string username, string password)
+    {
+        using var ms = new MemoryStream();
+        WriteString(ms, username);
+        WriteString(ms, password);
+        return MakeFrame(PacketType.RegisterReq, ms.ToArray());
     }
 
     // ── Room ──────────────────────────────────────────────────────────────────
@@ -138,6 +147,16 @@ public static class PacketDecoder
             Success  = r.ReadByte() != 0,
             PlayerID = r.ReadUInt32(),
             Message  = ReadString(r),
+        };
+    }
+
+    public static RegisterAckData DecodeRegisterAck(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new RegisterAckData
+        {
+            Success = r.ReadByte() != 0,
+            Message = ReadString(r),
         };
     }
 

@@ -32,6 +32,7 @@ public class NetworkManager : MonoBehaviour
 
     public event Action<uint>                     OnLoginSuccess;
     public event Action<string>                   OnLoginFailed;
+    public event Action<bool, string>             OnRegisterResult;
     public event Action<string, List<PlayerInfo>> OnJoinRoomSuccess;
     public event Action<PlayerInfo>               OnPlayerJoined;
     public event Action<uint>                     OnPlayerLeft;
@@ -86,10 +87,16 @@ public class NetworkManager : MonoBehaviour
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
-    /// <summary>Kết nối đến server và login với username.</summary>
-    public void Connect(string username)
+    /// <summary>Kết nối đến server và login với username, password và slot.</summary>
+    public void Connect(string username, string password, byte slot)
     {
-        StartCoroutine(ConnectRoutine(username));
+        StartCoroutine(ConnectRoutine(username, password, slot));
+    }
+
+    /// <summary>Đăng ký tài khoản mới.</summary>
+    public void RegisterAccount(string username, string password)
+    {
+        StartCoroutine(RegisterRoutine(username, password));
     }
 
     /// <summary>Vào phòng — "" = matchmake tự động.</summary>
@@ -144,8 +151,9 @@ public class NetworkManager : MonoBehaviour
 
     // ─── Private — Connect ────────────────────────────────────────────────────
 
-    private IEnumerator ConnectRoutine(string username)
+    private IEnumerator ConnectRoutine(string username, string password, byte slot)
     {
+        Disconnect();
         Debug.Log($"[Network] Connecting to {serverIP}:{tcpPort}...");
 
         // TCP connect
@@ -157,6 +165,7 @@ public class NetworkManager : MonoBehaviour
         catch (Exception e)
         {
             Debug.LogError($"[Network] TCP connect failed: {e.Message}");
+            OnLoginFailed?.Invoke("Connect failed: " + e.Message);
             yield break;
         }
 
@@ -176,8 +185,35 @@ public class NetworkManager : MonoBehaviour
         Debug.Log("[Network] Connected. Sending login...");
 
         // Gửi LoginReq
-        var loginBuf = PacketEncoder.EncodeLoginReq(username);
+        var loginBuf = PacketEncoder.EncodeLoginReq(username, password, slot);
         SendTCP(loginBuf);
+    }
+
+    private IEnumerator RegisterRoutine(string username, string password)
+    {
+        Disconnect();
+        Debug.Log($"[Network] Connecting to register at {serverIP}:{tcpPort}...");
+
+        tcpClient = new TcpClient();
+        var ar = tcpClient.BeginConnect(serverIP, tcpPort, null, null);
+        yield return new WaitUntil(() => ar.IsCompleted);
+
+        try { tcpClient.EndConnect(ar); }
+        catch (Exception e)
+        {
+            Debug.LogError($"[Network] TCP register connect failed: {e.Message}");
+            OnRegisterResult?.Invoke(false, "Connect failed: " + e.Message);
+            yield break;
+        }
+
+        tcpStream = tcpClient.GetStream();
+
+        tcpReadThread = new Thread(TCPReadLoop) { IsBackground = true };
+        tcpReadThread.Start();
+
+        Debug.Log("[Network] Connected. Sending register...");
+        var regBuf = PacketEncoder.EncodeRegisterReq(username, password);
+        SendTCP(regBuf);
     }
 
     // ─── Private — TCP Read Loop ──────────────────────────────────────────────
@@ -248,6 +284,15 @@ public class NetworkManager : MonoBehaviour
                         Debug.LogWarning($"[Network] Login failed: {loginAck.Message}");
                         OnLoginFailed?.Invoke(loginAck.Message);
                     }
+                });
+                break;
+
+            case PacketType.RegisterAck:
+                var regAck = PacketDecoder.DecodeRegisterAck(payload);
+                Enqueue(() =>
+                {
+                    Debug.Log($"[Network] Register OK — Success={regAck.Success}");
+                    OnRegisterResult?.Invoke(regAck.Success, regAck.Message);
                 });
                 break;
 
@@ -374,6 +419,12 @@ public struct LoginAckData
 {
     public bool   Success;
     public uint   PlayerID;
+    public string Message;
+}
+
+public struct RegisterAckData
+{
+    public bool Success;
     public string Message;
 }
 

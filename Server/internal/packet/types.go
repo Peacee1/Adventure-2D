@@ -5,7 +5,8 @@ package packet
 // LoginReqPacket: client gửi lên khi kết nối.
 type LoginReqPacket struct {
 	Username string // độ dài tối đa 32 byte (length-prefixed)
-	Token    string // auth token (length-prefixed), để trống ở Phase 1
+	Password string // mật khẩu đăng nhập (length-prefixed)
+	Slot     uint8  // slot nhân vật (0, 1, 2)
 }
 
 // LoginAckPacket: server trả về sau khi xác thực.
@@ -14,6 +15,19 @@ type LoginAckPacket struct {
 	PlayerID uint32
 	Message  string // thông báo lỗi nếu Success=false
 }
+
+// RegisterReqPacket: client gửi khi đăng ký tài khoản.
+type RegisterReqPacket struct {
+	Username string
+	Password string
+}
+
+// RegisterAckPacket: server phản hồi kết quả đăng ký.
+type RegisterAckPacket struct {
+	Success bool
+	Message string
+}
+
 
 // ── Room ──────────────────────────────────────────────────────────────────────
 

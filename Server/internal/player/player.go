@@ -104,6 +104,14 @@ func New(id uint32, username string, job JobClass, conn net.Conn) *Player {
 	}
 }
 
+// InitState khởi tạo vị trí và HP của player từ Database (thread-safe).
+func (p *Player) InitState(pos mathutil.Vector2, hp uint16) {
+	p.mu.Lock()
+	p.Position = pos
+	p.HP = hp
+	p.mu.Unlock()
+}
+
 // SetPosition cập nhật vị trí (thread-safe).
 func (p *Player) SetPosition(pos mathutil.Vector2) {
 	p.mu.Lock()
