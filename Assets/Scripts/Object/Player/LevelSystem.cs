@@ -63,6 +63,18 @@ public class LevelSystem : MonoBehaviour
     // ─── Public API ──────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Khôi phục level và EXP trực tiếp từ data server (không trigger OnLevelUp).
+    /// Gọi từ LocalPlayer.Initialize() sau khi load scene.
+    /// </summary>
+    public void SetLevelDirect(int lvl, int exp)
+    {
+        level      = Mathf.Clamp(lvl, 1, maxLevel);
+        currentExp = Mathf.Max(0, exp);
+        Debug.Log($"[LevelSystem] Restored from server: Level={level} EXP={currentExp}/{ExpToNextLevel}");
+        OnExpChanged?.Invoke(currentExp, ExpToNextLevel);
+    }
+
+    /// <summary>
     /// Nhận EXP. Nếu đủ ngưỡng sẽ tự động lên level (có thể lên nhiều level cùng lúc).
     /// </summary>
     public void GainExp(int amount)

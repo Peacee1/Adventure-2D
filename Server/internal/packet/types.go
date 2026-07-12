@@ -10,10 +10,19 @@ type LoginReqPacket struct {
 }
 
 // LoginAckPacket: server trả về sau khi xác thực.
+// Chứa đầy đủ data để client spawn đúng nhân vật ở đúng map/vị trí.
 type LoginAckPacket struct {
 	Success  bool
 	PlayerID uint32
-	Message  string // thông báo lỗi nếu Success=false
+	JobClass uint8   // 0=Warrior 1=Archer ...
+	Level    uint16
+	Exp      uint32
+	HP       uint16
+	MaxHP    uint16
+	X        float32
+	Y        float32
+	MapName  string  // Tên scene Unity cần load, vd "Map1"
+	Message  string  // Thông báo lỗi nếu Success=false
 }
 
 // RegisterReqPacket: client gửi khi đăng ký tài khoản.
@@ -26,6 +35,13 @@ type RegisterReqPacket struct {
 type RegisterAckPacket struct {
 	Success bool
 	Message string
+}
+
+// GuestLoginReqPacket: client gửi deviceUniqueIdentifier để tự động login mà không cần đăng ký.
+// Server tạo tài khoản guest nếu chưa có, luôn trả về LoginAck kể cả player mới.
+type GuestLoginReqPacket struct {
+	DeviceID string // SystemInfo.deviceUniqueIdentifier từ Unity
+	Slot     uint8  // slot nhân vật (0, 1, 2)
 }
 
 

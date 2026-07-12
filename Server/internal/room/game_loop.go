@@ -73,6 +73,9 @@ func (gl *GameLoop) Stop() {
 // broadcastWorldState gửi snapshot tất cả player qua UDP đến từng player trong phòng.
 func (gl *GameLoop) broadcastWorldState() {
 	if gl.udpSender == nil {
+		if gl.tick % (TickRate*5) == 0 { // cứ 5 giây log 1 lần
+			log.Printf("[GameLoop:%s] WARN: udpSender nil — không thể broadcast WorldState", gl.room.ID)
+		}
 		return
 	}
 
@@ -86,14 +89,23 @@ func (gl *GameLoop) broadcastWorldState() {
 		Players: snaps,
 	})
 
-	// Gửi đến từng player có UDP address đã đăng ký
 	gl.room.mu.RLock()
 	defer gl.room.mu.RUnlock()
 
+	sentCount, noAddrCount := 0, 0
 	for _, p := range gl.room.players {
 		udpAddr := p.GetUDPAddr()
 		if udpAddr != nil {
 			gl.udpSender.SendUDP(udpAddr, worldState)
+			sentCount++
+		} else {
+			noAddrCount++
 		}
+	}
+
+	// Log mỗi 5 giây để kiểm tra ai đang nhận WorldState
+	if gl.tick % (TickRate*5) == 0 {
+		log.Printf("[GameLoop:%s] tick=%d players=%d sent=%d no-udp-addr=%d",
+			gl.room.ID, gl.tick, len(gl.room.players), sentCount, noAddrCount)
 	}
 }

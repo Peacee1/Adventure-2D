@@ -24,6 +24,7 @@ type TCPServer struct {
 
 // NewTCPServer tạo TCP server.
 func NewTCPServer(addr string, rm *room.Manager, repo player.Repository) *TCPServer {
+	log.Printf("[TCP] Initializing TCP server on %s", addr)
 	return &TCPServer{
 		addr:            addr,
 		roomManager:     rm,
@@ -50,6 +51,7 @@ func (s *TCPServer) Start() error {
 			log.Printf("[TCP] Accept error: %v", err)
 			continue
 		}
+		log.Printf("[TCP] Accepted new connection from %s", conn.RemoteAddr())
 		go s.handleConn(conn)
 	}
 }
@@ -62,11 +64,15 @@ func (s *TCPServer) handleConn(conn net.Conn) {
 
 	sess.OnPacket = s.dispatch
 	sess.OnDisconnect = func(sess *player.Session) {
+		log.Printf("[TCP] OnDisconnect: player %d (%s) — saving & removing from room", sess.Player.ID, sess.Player.Username)
 		s.roomHandler.HandleLeave(sess.Player.ID)
 		// Lưu trạng thái người chơi vào DB khi ngắt kết nối
 		if sess.Player.ID != 0 {
 			if err := s.dbRepo.Save(sess.Player); err != nil {
-				log.Printf("[TCP] Lỗi khi lưu trạng thái người chơi %s: %v", sess.Player.Username, err)
+				log.Printf("[TCP] ERROR saving player %d (%s) on disconnect: %v",
+					sess.Player.ID, sess.Player.Username, err)
+			} else {
+				log.Printf("[TCP] Player %d (%s) state saved on disconnect", sess.Player.ID, sess.Player.Username)
 			}
 		}
 	}
@@ -98,9 +104,13 @@ func (s *TCPServer) dispatch(pTypeRaw uint16, payload []byte, sess *player.Sessi
 		ping, err := packet.DecodePing(payload)
 		if err == nil {
 			sess.Send(packet.EncodePong(packet.PongPacket{Timestamp: ping.Timestamp}))
+			log.Printf("[TCP] Ping from player %d — Pong sent (ts=%d)", sess.Player.ID, ping.Timestamp)
+		} else {
+			log.Printf("[TCP] Ping decode error from player %d: %v", sess.Player.ID, err)
 		}
 
 	default:
-		log.Printf("[TCP] Unknown packet type: 0x%04X", pTypeRaw)
+		log.Printf("[TCP] Unknown packet type=0x%04X from player %d (%s) — ignoring",
+			pTypeRaw, sess.Player.ID, sess.Player.Username)
 	}
 }

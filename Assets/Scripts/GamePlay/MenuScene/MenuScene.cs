@@ -1,11 +1,12 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using TMPro;
-using System.Collections.Generic;
 
 /// <summary>
 /// MenuScene — xử lý giao diện đăng nhập, đăng ký và lựa chọn slot nhân vật.
+/// Sau khi login + join room thành công → lưu data vào GameSession → LoadScene.
 /// </summary>
 public class MenuScene : MonoBehaviour
 {
@@ -19,19 +20,21 @@ public class MenuScene : MonoBehaviour
     [SerializeField] private Button registerBtn;
     [SerializeField] private Button playBtn;
 
-    [Header("Scene Configuration")]
-    [SerializeField] private string gameSceneName = "SampleScene";
+    [Header("Feedback")]
+    [SerializeField] private TMP_Text statusText;
+
 
     private void Awake()
     {
-        playBtn.onClick.AddListener(() => Play());
-        loginBtn.onClick.AddListener(() => Login());
-        registerBtn.onClick.AddListener(() => Register());
+        if (playBtn     != null) playBtn.onClick.AddListener(Play);
+        if (loginBtn    != null) loginBtn.onClick.AddListener(Login);
+        if (registerBtn != null) registerBtn.onClick.AddListener(Register);
     }
 
     private void Start()
     {
-        // Đăng ký nhận sự kiện từ NetworkManager
+        EnsureGameSession();
+
         if (NetworkManager.Instance != null)
         {
             NetworkManager.Instance.OnLoginSuccess    += HandleLoginSuccess;
@@ -41,13 +44,12 @@ public class MenuScene : MonoBehaviour
         }
         else
         {
-            Debug.LogWarning("[MenuScene] NetworkManager.Instance không tồn tại.");
+            Debug.LogError("[MenuScene] NetworkManager.Instance == null! Hãy đảm bảo NetworkManager có trong scene.");
         }
     }
 
     private void OnDestroy()
     {
-        // Hủy đăng ký sự kiện tránh leak memory
         if (NetworkManager.Instance != null)
         {
             NetworkManager.Instance.OnLoginSuccess    -= HandleLoginSuccess;
@@ -57,54 +59,55 @@ public class MenuScene : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Play kết nối và đăng nhập tài khoản. Chức nghiệp mặc định của nhân vật mới sẽ là Archer (Cung thủ).
-    /// </summary>
+    // ─── Button Handlers ─────────────────────────────────────────────────────
+
     private void Play()
     {
-        string username = usernameInput.text;
-        string password = passwordInput.text;
-        byte slot = (byte)slotDropdown.value; // Dropdown có index 0, 1, 2 tương ứng với tối đa 3 nhân vật
+        string username = usernameInput?.text ?? "";
+        string password = passwordInput?.text ?? "";
+        byte   slot     = (byte)(slotDropdown?.value ?? 0);
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            Debug.LogWarning("[Menu] Vui lòng nhập đầy đủ Username và Password.");
+            ShowStatus("Vui lòng nhập đầy đủ Username và Password.", isError: true);
             return;
         }
 
-        Debug.Log($"[Menu] Bắt đầu chơi. Tài khoản: {username}, Slot nhân vật: {slot + 1}");
-        // Kết nối và đăng nhập. Mặc định phía Server khi tạo mới nhân vật sẽ là Cung thủ (JobClass = 1)
+        ShowStatus($"Đang kết nối... (slot {slot + 1})");
+        Debug.Log($"[Menu] Play: user={username} slot={slot}");
         NetworkManager.Instance.Connect(username, password, slot);
     }
 
     private void Login()
     {
-        string username = usernameInput.text;
-        string password = passwordInput.text;
-        byte slot = (byte)slotDropdown.value;
+        string username = usernameInput?.text ?? "";
+        string password = passwordInput?.text ?? "";
+        byte   slot     = (byte)(slotDropdown?.value ?? 0);
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            Debug.LogWarning("[Menu] Vui lòng nhập đầy đủ Username và Password.");
+            ShowStatus("Vui lòng nhập đầy đủ Username và Password.", isError: true);
             return;
         }
 
-        Debug.Log($"[Menu] Yêu cầu đăng nhập tài khoản: {username}");
+        ShowStatus("Đang đăng nhập...");
+        Debug.Log($"[Menu] Login: user={username} slot={slot}");
         NetworkManager.Instance.Connect(username, password, slot);
     }
 
     private void Register()
     {
-        string username = usernameInput.text;
-        string password = passwordInput.text;
+        string username = usernameInput?.text ?? "";
+        string password = passwordInput?.text ?? "";
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            Debug.LogWarning("[Menu] Vui lòng nhập đầy đủ Username và Password để đăng ký.");
+            ShowStatus("Vui lòng nhập đầy đủ Username và Password.", isError: true);
             return;
         }
 
-        Debug.Log($"[Menu] Yêu cầu đăng ký tài khoản mới: {username}");
+        ShowStatus("Đang đăng ký...");
+        Debug.Log($"[Menu] Register: user={username}");
         NetworkManager.Instance.RegisterAccount(username, password);
     }
 
@@ -112,26 +115,61 @@ public class MenuScene : MonoBehaviour
 
     private void HandleLoginSuccess(uint playerID)
     {
-        Debug.Log($"[Menu] Đăng nhập thành công! ID nhân vật: {playerID}. Đang vào phòng chơi...");
-        NetworkManager.Instance.JoinRoom(""); // Tự động ghép phòng chơi
+        Debug.Log($"[Menu] Login OK! PlayerID={playerID}. Đang vào phòng...");
+        ShowStatus("Đăng nhập thành công! Đang vào phòng...");
+        NetworkManager.Instance.JoinRoom(""); // Tự động ghép phòng
     }
 
     private void HandleLoginFailed(string msg)
     {
-        Debug.LogError($"[Menu] Đăng nhập thất bại: {msg}");
+        Debug.LogError($"[Menu] Login failed: {msg}");
+        ShowStatus($"Đăng nhập thất bại: {msg}", isError: true);
     }
 
     private void HandleRegisterResult(bool success, string msg)
     {
         if (success)
-            Debug.Log($"[Menu] Đăng ký thành công: {msg}");
+        {
+            ShowStatus($"Đăng ký thành công! {msg}");
+            Debug.Log($"[Menu] Register OK: {msg}");
+        }
         else
-            Debug.LogError($"[Menu] Đăng ký thất bại: {msg}");
+        {
+            ShowStatus($"Đăng ký thất bại: {msg}", isError: true);
+            Debug.LogError($"[Menu] Register failed: {msg}");
+        }
     }
 
     private void HandleJoinRoomSuccess(string roomID, List<PlayerInfo> existingPlayers)
     {
-        Debug.Log($"[Menu] Đã vào phòng {roomID}. Chuyển cảnh sang Scene game...");
-        SceneManager.LoadScene(gameSceneName);
+        // Lấy map name từ GameSession (đã set khi nhận LoginAck)
+        string targetScene = GameSession.Instance != null && !string.IsNullOrEmpty(GameSession.Instance.MapName)
+            ? GameSession.Instance.MapName
+            : "Map1";
+
+        Debug.Log($"[Menu] Joined room {roomID} (existing={existingPlayers.Count}). Loading scene '{targetScene}'...");
+        ShowStatus($"Đã vào phòng! Đang tải {targetScene}...");
+
+        if (GameSession.Instance != null)
+            GameSession.Instance.SetRoom(roomID, existingPlayers);
+
+        SceneManager.LoadScene(targetScene);
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    private void ShowStatus(string msg, bool isError = false)
+    {
+        if (statusText == null) return;
+        statusText.text  = msg;
+        statusText.color = isError ? UnityEngine.Color.red : UnityEngine.Color.white;
+    }
+
+    private static void EnsureGameSession()
+    {
+        if (GameSession.Instance != null) return;
+        var go = new GameObject("GameSession");
+        go.AddComponent<GameSession>();
+        Debug.Log("[Menu] Created GameSession singleton");
     }
 }

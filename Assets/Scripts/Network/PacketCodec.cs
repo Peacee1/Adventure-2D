@@ -139,6 +139,21 @@ public static class PacketDecoder
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
+    public struct LoginAckData
+    {
+        public bool   Success;
+        public uint   PlayerID;
+        public byte   JobClass;
+        public ushort Level;
+        public uint   Exp;
+        public ushort HP;
+        public ushort MaxHP;
+        public float  X;
+        public float  Y;
+        public string MapName;
+        public string Message;
+    }
+
     public static LoginAckData DecodeLoginAck(byte[] payload)
     {
         using var r = new BinaryReader(new MemoryStream(payload));
@@ -146,6 +161,14 @@ public static class PacketDecoder
         {
             Success  = r.ReadByte() != 0,
             PlayerID = r.ReadUInt32(),
+            JobClass = r.ReadByte(),
+            Level    = r.ReadUInt16(),
+            Exp      = r.ReadUInt32(),
+            HP       = r.ReadUInt16(),
+            MaxHP    = r.ReadUInt16(),
+            X        = r.ReadSingle(),
+            Y        = r.ReadSingle(),
+            MapName  = ReadString(r),
             Message  = ReadString(r),
         };
     }

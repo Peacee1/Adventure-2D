@@ -2,6 +2,8 @@ package handler
 
 import (
 	"log"
+	"strings"
+	"unicode/utf8"
 
 	"adventure2d-server/internal/packet"
 	"adventure2d-server/internal/player"
@@ -19,9 +21,12 @@ func NewRegisterHandler(repo player.Repository) *RegisterHandler {
 
 // Handle giải mã gói tin đăng ký và thực thi đăng ký trong Database.
 func (h *RegisterHandler) Handle(payload []byte, session *player.Session) {
+	clientAddr := session.RemoteAddr().String()
+	log.Printf("[RegisterHandler] Register request from %s", clientAddr)
+
 	req, err := packet.DecodeRegisterReq(payload)
 	if err != nil {
-		log.Printf("[RegisterHandler] Decode error: %v", err)
+		log.Printf("[RegisterHandler] Decode error from %s: %v", clientAddr, err)
 		session.Send(packet.EncodeRegisterAck(packet.RegisterAckPacket{
 			Success: false,
 			Message: "invalid packet",
@@ -29,25 +34,42 @@ func (h *RegisterHandler) Handle(payload []byte, session *player.Session) {
 		return
 	}
 
-	if req.Username == "" || req.Password == "" {
+	log.Printf("[RegisterHandler] Decoded: username=%q (len=%d) from %s",
+		req.Username, utf8.RuneCountInString(req.Username), clientAddr)
+
+	// Kiểm tra trường rỗng
+	if strings.TrimSpace(req.Username) == "" || req.Password == "" {
+		log.Printf("[RegisterHandler] Empty username/password from %s", clientAddr)
 		session.Send(packet.EncodeRegisterAck(packet.RegisterAckPacket{
 			Success: false,
-			Message: "username or password empty",
+			Message: "username or password cannot be empty",
 		}))
 		return
 	}
 
+	// Thực hiện đăng ký (validation & hash được xử lý trong db layer)
 	err = h.repo.RegisterAccount(req.Username, req.Password)
 	if err != nil {
-		log.Printf("[RegisterHandler] Failed to register %s: %v", req.Username, err)
+		errMsg := err.Error()
+		log.Printf("[RegisterHandler] Register FAILED for username=%q from %s: %v", req.Username, clientAddr, err)
+
+		// Map lỗi nội bộ sang thông báo thân thiện với client
+		clientMsg := "registration failed"
+		if strings.Contains(errMsg, "already exists") {
+			clientMsg = "username already exists"
+		} else if strings.Contains(errMsg, "quá ngắn") || strings.Contains(errMsg, "quá dài") ||
+			strings.Contains(errMsg, "chỉ được chứa") {
+			clientMsg = errMsg // trả validation message trực tiếp
+		}
+
 		session.Send(packet.EncodeRegisterAck(packet.RegisterAckPacket{
 			Success: false,
-			Message: "username already exists",
+			Message: clientMsg,
 		}))
 		return
 	}
 
-	log.Printf("[RegisterHandler] Register OK: %s", req.Username)
+	log.Printf("[RegisterHandler] Register OK: username=%q from %s", req.Username, clientAddr)
 	session.Send(packet.EncodeRegisterAck(packet.RegisterAckPacket{
 		Success: true,
 		Message: "registration successful",

@@ -80,6 +80,13 @@ type Player struct {
 	// Trạng thái animation
 	State State
 
+	// Level và EXP
+	Level int
+	Exp   int
+
+	// Map cuối cùng player đứng (tên Scene Unity)
+	MapName string
+
 	// Timestamp của MoveInput cuối cùng (để lọc out-of-order UDP)
 	LastMoveTimestamp uint32
 

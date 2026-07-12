@@ -106,6 +106,14 @@ func EncodeLoginAck(p LoginAckPacket) []byte {
 	buf := &bytes.Buffer{}
 	writeBool(buf, p.Success)
 	writeUint32(buf, p.PlayerID)
+	writeUint8(buf, p.JobClass)
+	writeUint16(buf, p.Level)
+	writeUint32(buf, p.Exp)
+	writeUint16(buf, p.HP)
+	writeUint16(buf, p.MaxHP)
+	writeFloat32(buf, p.X)
+	writeFloat32(buf, p.Y)
+	writeString(buf, p.MapName)
 	writeString(buf, p.Message)
 	return EncodeFrame(TypeLoginAck, buf.Bytes())
 }
@@ -189,6 +197,15 @@ func EncodeRegisterAck(p RegisterAckPacket) []byte {
 }
 
 // ── Decoders ──────────────────────────────────────────────────────────────────
+
+func DecodeGuestLoginReq(payload []byte) (GuestLoginReqPacket, error) {
+	r := bytes.NewReader(payload)
+	var p GuestLoginReqPacket
+	var err error
+	if p.DeviceID, err = readString(r); err != nil { return p, err }
+	if p.Slot,     err = readUint8(r);  err != nil { return p, err }
+	return p, nil
+}
 
 func DecodeLoginReq(payload []byte) (LoginReqPacket, error) {
 	r := bytes.NewReader(payload)

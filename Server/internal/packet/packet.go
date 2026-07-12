@@ -9,10 +9,11 @@ type PacketType uint16
 
 const (
 	// ── Auth ──────────────────────────────────────────────────────────────────
-	TypeLoginReq  PacketType = 0x0001 // C→S  Đăng nhập
-	TypeLoginAck  PacketType = 0x0002 // S→C  Kết quả login
+	TypeLoginReq    PacketType = 0x0001 // C→S  Đăng nhập
+	TypeLoginAck    PacketType = 0x0002 // S→C  Kết quả login
 	TypeRegisterReq PacketType = 0x0003 // C→S  Đăng ký tài khoản
 	TypeRegisterAck PacketType = 0x0004 // S→C  Kết quả đăng ký
+	TypeGuestLoginReq PacketType = 0x0005 // C→S  Login bằng DeviceID (không cần đăng ký)
 
 	// ── Room ──────────────────────────────────────────────────────────────────
 	TypeJoinRoomReq  PacketType = 0x0010 // C→S  Vào phòng

@@ -2,55 +2,32 @@ using UnityEngine;
 
 namespace Freeland.Gameplay
 {
+    /// <summary>
+    /// CameraFollow — camera bám theo local player.
+    /// Gắn vào Main Camera.
+    ///
+    /// SRP: chỉ xử lý camera tracking.
+    /// </summary>
     public class CameraFollow : MonoBehaviour
     {
-        [Header("Target Settings")]
-        [SerializeField] private Transform target;
-        [SerializeField] private Vector3 offset = new Vector3(0f, 0f, -10f); // Default Z offset for 2D camera
+        [SerializeField] private float smoothSpeed = 8f;
+        [SerializeField] private Vector3 offset    = new Vector3(0f, 0f, -10f);
 
-        [Header("Smooth Settings")]
-        [SerializeField] [Range(0f, 1f)] private float smoothTime = 0.15f; // Duration of smoothing
+        private Transform target;
 
-        private Vector3 velocity = Vector3.zero;
-
-        private void Start()
+        public void SetTarget(Transform t)
         {
-            // Safeguard: Ensure this script is ONLY active if attached to a Camera GameObject
-            if (GetComponent<Camera>() == null)
-            {
-                Debug.LogError($"[CameraFollow] Script is attached to a non-Camera GameObject ({gameObject.name})! Disabling script to protect position.");
-                enabled = false;
-                return;
-            }
-            FindPlayerTarget();
+            target = t;
+            Debug.Log($"[CameraFollow] Target set: {t.name}");
         }
 
         private void LateUpdate()
         {
-            // If the target is lost, try to find the player target again
-            if (target == null)
-            {
-                FindPlayerTarget();
-                if (target == null) return;
-            }
+            if (target == null) return;
 
-            // Target position based on player position and offset (lock target Z to 0)
-            Vector3 targetPosition = new Vector3(target.position.x + offset.x, target.position.y + offset.y, offset.z);
-
-            // Smoothly interpolate the camera position using SmoothDamp
-            Vector3 newPosition = Vector3.SmoothDamp(transform.position, targetPosition, ref velocity, smoothTime);
-            
-            // Force the Z position to remain strictly at offset.z
-            transform.position = new Vector3(newPosition.x, newPosition.y, offset.z);
-        }
-
-        private void FindPlayerTarget()
-        {
-            Player player = FindFirstObjectByType<Player>();
-            if (player != null)
-            {
-                target = player.transform;
-            }
+            Vector3 desired  = target.position + offset;
+            Vector3 smoothed = Vector3.Lerp(transform.position, desired, smoothSpeed * Time.deltaTime);
+            transform.position = smoothed;
         }
     }
 }

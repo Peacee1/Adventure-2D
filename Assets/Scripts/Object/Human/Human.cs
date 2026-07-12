@@ -49,7 +49,7 @@ public class Human : BaseObject
     /// Controller hiện tại đang điều khiển Human này.
     /// Được set bởi Player.cs / AI / NetworkController qua SetController().
     /// </summary>
-    public IHumanController Controller { get; private set; }
+    public IHumanController Controller { get; set; }
 
     /// <summary>Animator controller — shared logic giao tiếp với Unity Animator.</summary>
     public HumanAnimatorController AnimatorController { get; private set; }

@@ -34,3 +34,10 @@ Server/adventure2d.db
 *.db
 *.exe
 
+
+# Build output
+Test/
+*.resS
+Server/adventure2d.db
+Server/adventure2d.db-wal
+Server/adventure2d.db-shm

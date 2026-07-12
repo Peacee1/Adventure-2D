@@ -1,29 +1,27 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// RemotePlayer — đại diện cho player khác trên màn hình local.
+/// RemotePlayer — đại diện visual của player khác trên màn hình local.
+/// Nhận WorldState snapshot mỗi tick và interpolate vị trí cho mượt.
 ///
-/// Nhận WorldState từ NetworkManager mỗi tick (60Hz server, ~16ms).
-/// Dùng interpolation để di chuyển mượt giữa các WorldState snapshot.
-///
-/// SRP: chỉ xử lý visual representation của remote player.
+/// SRP: chỉ xử lý visual representation, không chứa game logic.
 /// </summary>
 public class RemotePlayer : MonoBehaviour
 {
     // ─── State ────────────────────────────────────────────────────────────────
 
-    public uint PlayerID { get; private set; }
+    public uint   PlayerID { get; private set; }
     public string Username { get; private set; }
+    public byte   JobClass { get; private set; }
+    public Vector2 LastDir { get; private set; }  // hướng nhìn từ snapshot (cho RemoteHumanController)
 
-    // Interpolation
-    private Vector2 targetPosition;
-    private Vector2 currentPosition;
-    private float   interpolationSpeed = 15f;
+    private Vector2 targetPos;
+    private Vector2 currentPos;
 
-    // Component refs
-    private SpriteRenderer spriteRenderer;
-    private Animator       animator;
+    [SerializeField] private float lerpSpeed = 15f;
+
+    // Optional components
+    private Animator animator;
 
     // ─── Init ─────────────────────────────────────────────────────────────────
 
@@ -31,131 +29,41 @@ public class RemotePlayer : MonoBehaviour
     {
         PlayerID = info.PlayerID;
         Username = info.Username;
+        JobClass = info.JobClass;
 
-        currentPosition = new Vector2(info.X, info.Y);
-        targetPosition  = currentPosition;
-        transform.position = new Vector3(currentPosition.x, currentPosition.y, 0f);
+        currentPos = new Vector2(info.X, info.Y);
+        targetPos  = currentPos;
+        transform.position = new Vector3(currentPos.x, currentPos.y, 0f);
 
-        spriteRenderer = GetComponentInChildren<SpriteRenderer>();
-        animator       = GetComponentInChildren<Animator>();
+        animator = GetComponentInChildren<Animator>();
+
+        gameObject.name = $"Remote_{info.PlayerID}_{info.Username}";
+        Debug.Log($"[RemotePlayer] Init: ID={info.PlayerID} User={info.Username} Job={info.JobClass} Pos={currentPos}");
     }
 
-    // ─── Unity Lifecycle ──────────────────────────────────────────────────────
+    // ─── Unity Lifecycle ─────────────────────────────────────────────────────
 
     private void Update()
     {
-        // Smooth interpolation đến target position
-        currentPosition = Vector2.Lerp(currentPosition, targetPosition, interpolationSpeed * Time.deltaTime);
-        transform.position = new Vector3(currentPosition.x, currentPosition.y, transform.position.z);
+        // Smooth interpolation đến server position
+        currentPos = Vector2.Lerp(currentPos, targetPos, lerpSpeed * Time.deltaTime);
+        transform.position = new Vector3(currentPos.x, currentPos.y, transform.position.z);
     }
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
-    /// <summary>Cập nhật từ WorldState packet (gọi từ NetworkManager event).</summary>
+    /// <summary>Áp dụng snapshot từ WorldState UDP packet (gọi từ GameSceneBootstrap).</summary>
     public void ApplySnapshot(PlayerSnapshot snap)
     {
-        targetPosition = new Vector2(snap.X, snap.Y);
+        targetPos = new Vector2(snap.X, snap.Y);
+        LastDir   = new Vector2(snap.DirX, snap.DirY);
 
         // Flip hướng nhìn
-        if (snap.DirX < -0.01f)
-            transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
-        else if (snap.DirX > 0.01f)
-            transform.localRotation = Quaternion.identity;
+        if      (snap.DirX < -0.01f) transform.localScale = new Vector3(-Mathf.Abs(transform.localScale.x), transform.localScale.y, 1f);
+        else if (snap.DirX >  0.01f) transform.localScale = new Vector3( Mathf.Abs(transform.localScale.x), transform.localScale.y, 1f);
 
-        // Cập nhật animator
+        // Animator
         if (animator != null)
-        {
-            float speed = (snap.State == 1) ? 1f : 0f; // 1=Move
-            animator.SetFloat("speed", speed);
-        }
-    }
-}
-
-/// <summary>
-/// RemotePlayerManager — quản lý tất cả remote players trên màn hình.
-/// Lắng nghe NetworkManager events và spawn/despawn RemotePlayer GameObject.
-/// </summary>
-public class RemotePlayerManager : MonoBehaviour
-{
-    [SerializeField] private GameObject remotePlayerPrefab;
-
-    private readonly Dictionary<uint, RemotePlayer> remotePlayers = new();
-
-    private void OnEnable()
-    {
-        if (NetworkManager.Instance == null) return;
-
-        NetworkManager.Instance.OnJoinRoomSuccess += HandleJoinRoom;
-        NetworkManager.Instance.OnPlayerJoined    += HandlePlayerJoined;
-        NetworkManager.Instance.OnPlayerLeft      += HandlePlayerLeft;
-        NetworkManager.Instance.OnWorldState      += HandleWorldState;
-    }
-
-    private void OnDisable()
-    {
-        if (NetworkManager.Instance == null) return;
-
-        NetworkManager.Instance.OnJoinRoomSuccess -= HandleJoinRoom;
-        NetworkManager.Instance.OnPlayerJoined    -= HandlePlayerJoined;
-        NetworkManager.Instance.OnPlayerLeft      -= HandlePlayerLeft;
-        NetworkManager.Instance.OnWorldState      -= HandleWorldState;
-    }
-
-    // ─── Event Handlers ───────────────────────────────────────────────────────
-
-    private void HandleJoinRoom(string roomID, System.Collections.Generic.List<PlayerInfo> existing)
-    {
-        Debug.Log($"[RemotePlayerManager] Joined room {roomID} with {existing.Count} players");
-        foreach (var info in existing)
-        {
-            if (info.PlayerID == NetworkManager.Instance.LocalPlayerID) continue;
-            SpawnRemotePlayer(info);
-        }
-    }
-
-    private void HandlePlayerJoined(PlayerInfo info)
-    {
-        if (info.PlayerID == NetworkManager.Instance.LocalPlayerID) return;
-        SpawnRemotePlayer(info);
-        Debug.Log($"[RemotePlayerManager] Player {info.Username} joined");
-    }
-
-    private void HandlePlayerLeft(uint playerID)
-    {
-        if (remotePlayers.TryGetValue(playerID, out var rp))
-        {
-            Destroy(rp.gameObject);
-            remotePlayers.Remove(playerID);
-            Debug.Log($"[RemotePlayerManager] Player {playerID} left");
-        }
-    }
-
-    private void HandleWorldState(WorldStatePacket ws)
-    {
-        foreach (var snap in ws.Players)
-        {
-            if (snap.PlayerID == NetworkManager.Instance.LocalPlayerID) continue;
-            if (remotePlayers.TryGetValue(snap.PlayerID, out var rp))
-            {
-                rp.ApplySnapshot(snap);
-            }
-        }
-    }
-
-    // ─── Private ──────────────────────────────────────────────────────────────
-
-    private void SpawnRemotePlayer(PlayerInfo info)
-    {
-        if (remotePlayers.ContainsKey(info.PlayerID)) return;
-
-        var go = Instantiate(remotePlayerPrefab,
-            new Vector3(info.X, info.Y, 0f), Quaternion.identity, transform);
-        go.name = $"RemotePlayer_{info.PlayerID}_{info.Username}";
-
-        var rp = go.GetComponent<RemotePlayer>();
-        if (rp == null) rp = go.AddComponent<RemotePlayer>();
-        rp.Initialize(info);
-
-        remotePlayers[info.PlayerID] = rp;
+            animator.SetFloat("speed", snap.State == 1 ? 1f : 0f); // 1 = Move
     }
 }

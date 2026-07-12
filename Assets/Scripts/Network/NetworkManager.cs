@@ -45,6 +45,7 @@ public class NetworkManager : MonoBehaviour
     // ─── State ────────────────────────────────────────────────────────────────
 
     public uint  LocalPlayerID { get; private set; }
+    public byte  LocalJobClass  { get; private set; } = 1; // 1 = Archer (server default)
     public bool  IsConnected   => tcpClient != null && tcpClient.Connected;
 
     private TcpClient  tcpClient;
@@ -228,6 +229,10 @@ public class NetworkManager : MonoBehaviour
                 Dispatch(pType, payload);
             }
         }
+        catch (System.Threading.ThreadAbortException)
+        {
+            // Bình thường — xảy ra khi Unity dừng Play mode và hủy thread
+        }
         catch (Exception e)
         {
             if (tcpClient != null) // không phải do Disconnect()
@@ -256,6 +261,10 @@ public class NetworkManager : MonoBehaviour
                 Dispatch(pType, payload);
             }
         }
+        catch (System.Threading.ThreadAbortException)
+        {
+            // Bình thường — xảy ra khi Unity dừng Play mode và hủy thread
+        }
         catch (Exception e)
         {
             if (udpClient != null)
@@ -275,8 +284,26 @@ public class NetworkManager : MonoBehaviour
                 {
                     if (loginAck.Success)
                     {
-                        LocalPlayerID = loginAck.PlayerID;
-                        Debug.Log($"[Network] Login OK — PlayerID={LocalPlayerID}");
+                        LocalPlayerID  = loginAck.PlayerID;
+                        LocalJobClass  = loginAck.JobClass;
+                        Debug.Log($"[Network] Login OK — ID={LocalPlayerID} Job={LocalJobClass} Level={loginAck.Level} Map={loginAck.MapName} Pos=({loginAck.X},{loginAck.Y})");
+
+                        // Lưu đầy đủ data từ server vào GameSession
+                        if (GameSession.Instance != null)
+                        {
+                            GameSession.Instance.SetPlayerInfo(
+                                playerID:     loginAck.PlayerID,
+                                jobClassByte: loginAck.JobClass,
+                                username:     "",
+                                hp:           loginAck.HP,
+                                maxHP:        loginAck.MaxHP,
+                                x:            loginAck.X,
+                                y:            loginAck.Y
+                            );
+                            GameSession.Instance.SetLevel(loginAck.Level, (int)loginAck.Exp);
+                            GameSession.Instance.SetMapName(loginAck.MapName);
+                        }
+
                         OnLoginSuccess?.Invoke(LocalPlayerID);
                     }
                     else
@@ -413,13 +440,6 @@ public struct RespawnAckPacket
     public uint  PlayerID;
     public float X, Y;
     public ushort HP;
-}
-
-public struct LoginAckData
-{
-    public bool   Success;
-    public uint   PlayerID;
-    public string Message;
 }
 
 public struct RegisterAckData

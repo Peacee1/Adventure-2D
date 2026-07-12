@@ -9,6 +9,9 @@ type PlayerRecord struct {
 	JobClass  JobClass
 	X, Y      float32
 	HP        uint16
+	Level     int
+	Exp       int
+	MapName   string // Scene cuối cùng player đứng, mặc định "Map1"
 }
 
 // Repository định nghĩa giao diện lưu trữ và truy xuất thông tin tài khoản & nhân vật.
@@ -19,6 +22,10 @@ type Repository interface {
 
 	// VerifyAccount xác thực tài khoản và trả về Account ID.
 	VerifyAccount(username, password string) (uint32, error)
+
+	// GuestLogin tự động tạo tài khoản guest theo deviceID nếu chưa có.
+	// Luôn thành công — trả về accountID để load/tạo nhân vật.
+	GuestLogin(deviceID string) (accountID uint32, err error)
 
 	// GetOrCreatePlayer truy vấn nhân vật theo account ID và slot.
 	// Nếu chưa tồn tại, tạo mới nhân vật mặc định (JobClass: Archer).
