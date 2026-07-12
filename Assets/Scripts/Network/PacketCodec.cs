@@ -1,0 +1,255 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net.Sockets;
+using System.Text;
+using UnityEngine;
+
+/// <summary>
+/// PacketEncoder — encode packet structs thành binary (Little-Endian).
+/// Mirror chính xác với Go encoder.go.
+/// </summary>
+public static class PacketEncoder
+{
+    private static readonly byte[] _hdr = new byte[4];
+
+    // ── Frame wrapper ─────────────────────────────────────────────────────────
+
+    private static byte[] MakeFrame(PacketType pType, byte[] payload)
+    {
+        byte[] frame = new byte[4 + payload.Length];
+        BitConverter.GetBytes((ushort)pType).CopyTo(frame, 0);
+        BitConverter.GetBytes((ushort)payload.Length).CopyTo(frame, 2);
+        payload.CopyTo(frame, 4);
+        return frame;
+    }
+
+    // ── Auth ──────────────────────────────────────────────────────────────────
+
+    public static byte[] EncodeLoginReq(string username, string token = "")
+    {
+        using var ms = new MemoryStream();
+        WriteString(ms, username);
+        WriteString(ms, token);
+        return MakeFrame(PacketType.LoginReq, ms.ToArray());
+    }
+
+    // ── Room ──────────────────────────────────────────────────────────────────
+
+    public static byte[] EncodeJoinRoomReq(string roomID)
+    {
+        using var ms = new MemoryStream();
+        WriteString(ms, roomID);
+        return MakeFrame(PacketType.JoinRoomReq, ms.ToArray());
+    }
+
+    // ── Movement (UDP) ────────────────────────────────────────────────────────
+
+    public static byte[] EncodeMoveInput(uint playerID, Vector2 dest, Vector2 dir, uint timestamp)
+    {
+        using var ms = new MemoryStream();
+        WriteUint32(ms, playerID);
+        WriteFloat32(ms, dest.x);
+        WriteFloat32(ms, dest.y);
+        WriteFloat32(ms, dir.x);
+        WriteFloat32(ms, dir.y);
+        WriteUint32(ms, timestamp);
+        return MakeFrame(PacketType.MoveInput, ms.ToArray());
+    }
+
+    // ── Combat ────────────────────────────────────────────────────────────────
+
+    public static byte[] EncodeAttackReq(uint playerID, uint targetID, Vector2 dir)
+    {
+        using var ms = new MemoryStream();
+        WriteUint32(ms, playerID);
+        WriteUint32(ms, targetID);
+        WriteFloat32(ms, dir.x);
+        WriteFloat32(ms, dir.y);
+        return MakeFrame(PacketType.AttackReq, ms.ToArray());
+    }
+
+    public static byte[] EncodeRespawnReq(uint playerID)
+    {
+        using var ms = new MemoryStream();
+        WriteUint32(ms, playerID);
+        return MakeFrame(PacketType.RespawnReq, ms.ToArray());
+    }
+
+    // ── System ────────────────────────────────────────────────────────────────
+
+    public static byte[] EncodePing(uint timestamp)
+    {
+        using var ms = new MemoryStream();
+        WriteUint32(ms, timestamp);
+        return MakeFrame(PacketType.Ping, ms.ToArray());
+    }
+
+    // ── Write helpers ─────────────────────────────────────────────────────────
+
+    private static void WriteUint8(MemoryStream ms, byte v)     => ms.WriteByte(v);
+    private static void WriteUint16(MemoryStream ms, ushort v)  => ms.Write(BitConverter.GetBytes(v), 0, 2);
+    private static void WriteUint32(MemoryStream ms, uint v)    => ms.Write(BitConverter.GetBytes(v), 0, 4);
+    private static void WriteFloat32(MemoryStream ms, float v)  => ms.Write(BitConverter.GetBytes(v), 0, 4);
+    private static void WriteString(MemoryStream ms, string s)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(s ?? "");
+        WriteUint16(ms, (ushort)bytes.Length);
+        ms.Write(bytes, 0, bytes.Length);
+    }
+}
+
+/// <summary>
+/// PacketDecoder — decode binary payload thành packet structs (Little-Endian).
+/// </summary>
+public static class PacketDecoder
+{
+    // ── Frame reader (TCP) ────────────────────────────────────────────────────
+
+    public static (ushort pType, byte[] payload) ReadFrame(NetworkStream stream)
+    {
+        byte[] header = ReadExact(stream, 4);
+        ushort pType  = BitConverter.ToUInt16(header, 0);
+        ushort payLen = BitConverter.ToUInt16(header, 2);
+        byte[] payload = payLen > 0 ? ReadExact(stream, payLen) : Array.Empty<byte>();
+        return (pType, payload);
+    }
+
+    private static byte[] ReadExact(NetworkStream stream, int count)
+    {
+        byte[] buf = new byte[count];
+        int total = 0;
+        while (total < count)
+        {
+            int n = stream.Read(buf, total, count - total);
+            if (n == 0) throw new EndOfStreamException();
+            total += n;
+        }
+        return buf;
+    }
+
+    // ── Auth ──────────────────────────────────────────────────────────────────
+
+    public static LoginAckData DecodeLoginAck(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new LoginAckData
+        {
+            Success  = r.ReadByte() != 0,
+            PlayerID = r.ReadUInt32(),
+            Message  = ReadString(r),
+        };
+    }
+
+    // ── Room ──────────────────────────────────────────────────────────────────
+
+    public static JoinRoomAckData DecodeJoinRoomAck(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        var result = new JoinRoomAckData
+        {
+            Success = r.ReadByte() != 0,
+            RoomID  = ReadString(r),
+        };
+        ushort count = r.ReadUInt16();
+        result.ExistingPlayers = new List<PlayerInfo>(count);
+        for (int i = 0; i < count; i++)
+            result.ExistingPlayers.Add(ReadPlayerInfo(r));
+        return result;
+    }
+
+    public static PlayerInfo DecodePlayerJoined(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return ReadPlayerInfo(r);
+    }
+
+    public static uint DecodePlayerLeft(byte[] payload)
+    {
+        return BitConverter.ToUInt32(payload, 0);
+    }
+
+    // ── Movement ──────────────────────────────────────────────────────────────
+
+    public static WorldStatePacket DecodeWorldState(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        uint tick   = r.ReadUInt32();
+        ushort count = r.ReadUInt16();
+        var players = new PlayerSnapshot[count];
+        for (int i = 0; i < count; i++)
+        {
+            players[i] = new PlayerSnapshot
+            {
+                PlayerID = r.ReadUInt32(),
+                X        = r.ReadSingle(),
+                Y        = r.ReadSingle(),
+                DirX     = r.ReadSingle(),
+                DirY     = r.ReadSingle(),
+                HP       = r.ReadUInt16(),
+                State    = r.ReadByte(),
+            };
+        }
+        return new WorldStatePacket { Tick = tick, Players = players };
+    }
+
+    // ── Combat ────────────────────────────────────────────────────────────────
+
+    public static DamageEventPacket DecodeDamageEvent(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new DamageEventPacket
+        {
+            AttackerID  = r.ReadUInt32(),
+            TargetID    = r.ReadUInt32(),
+            Damage      = r.ReadUInt32(),
+            RemainingHP = r.ReadUInt16(),
+            IsCrit      = r.ReadByte() != 0,
+        };
+    }
+
+    public static DieEventPacket DecodeDieEvent(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new DieEventPacket
+        {
+            PlayerID = r.ReadUInt32(),
+            KillerID = r.ReadUInt32(),
+        };
+    }
+
+    public static RespawnAckPacket DecodeRespawnAck(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new RespawnAckPacket
+        {
+            PlayerID = r.ReadUInt32(),
+            X        = r.ReadSingle(),
+            Y        = r.ReadSingle(),
+            HP       = r.ReadUInt16(),
+        };
+    }
+
+    // ── Read helpers ──────────────────────────────────────────────────────────
+
+    private static string ReadString(BinaryReader r)
+    {
+        ushort len  = r.ReadUInt16();
+        byte[] bytes = r.ReadBytes(len);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    private static PlayerInfo ReadPlayerInfo(BinaryReader r)
+    {
+        return new PlayerInfo
+        {
+            PlayerID = r.ReadUInt32(),
+            Username = ReadString(r),
+            X        = r.ReadSingle(),
+            Y        = r.ReadSingle(),
+            HP       = r.ReadUInt16(),
+            MaxHP    = r.ReadUInt16(),
+            JobClass = r.ReadByte(),
+        };
+    }
+}

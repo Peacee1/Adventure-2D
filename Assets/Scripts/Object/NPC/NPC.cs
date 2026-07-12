@@ -4,7 +4,7 @@ using UnityEngine;
 
 public class NPC : BaseObject
 {
-    protected virtual void Awake()
+    protected override void Awake()
     {
         outlineColor = Color.white; // Mặc định outline của NPC là màu trắng tinh
         base.Awake();

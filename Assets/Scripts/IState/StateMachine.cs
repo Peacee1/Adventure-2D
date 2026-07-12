@@ -24,6 +24,23 @@ namespace Freeland.StateMachine
                 states[type] = state;
             }
         }
+
+        /// <summary>
+        /// Registers <paramref name="state"/> under the key of <typeparamref name="TKey"/> instead of its own type.
+        /// Use when a subclass state should be found via the base state's key.
+        /// Example: RegisterStateAs&lt;HumanAttackState, ArcherAttackState&gt;(archerAttack)
+        /// → ChangeState&lt;HumanAttackState&gt;() will resolve to ArcherAttackState.
+        /// </summary>
+        public void RegisterStateAs<TKey, TState>(TState state)
+            where TKey  : IState
+            where TState : TKey
+        {
+            var type = typeof(TKey);
+            if (!states.ContainsKey(type))
+            {
+                states[type] = state;
+            }
+        }
         public void ChangeState<TState>() where TState : IState
         {
             var type = typeof(TState);

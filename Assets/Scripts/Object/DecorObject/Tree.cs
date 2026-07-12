@@ -4,7 +4,7 @@ using UnityEngine;
 
 public class TreeObject : BaseObject
 {
-    protected virtual void Awake()
+    protected override void Awake()
     {
         base.Awake();
         maxHp = 3;

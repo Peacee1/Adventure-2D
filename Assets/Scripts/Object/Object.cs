@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
@@ -14,6 +14,20 @@ public class BaseObject : MonoBehaviour
     [SerializeField] protected int hp;           // Current Health Points
     [SerializeField] protected int maxMp;        // Maximum Mana Points
     [SerializeField] protected int mp;           // Current Mana Points
+    [SerializeField] protected int atkPhysical;    // ATK Vật Lý
+    [SerializeField] protected int atkMagic;       // ATK Phép
+    [SerializeField] protected int defPhysical;    // DEF Vật Lý
+    [SerializeField] protected int defMagic;       // DEF Phép
+
+    [Header("Regeneration (/giây)")]
+    [SerializeField] protected float hpRegen = 0f; // HP hồi mỗi giây
+    [SerializeField] protected float mpRegen = 0f; // MP hồi mỗi giây
+
+    [Header("Combat")]
+    [SerializeField] protected float attackRange = 1.5f; // Tầm đánh (units)
+    [SerializeField] protected float attackSpeed = 1f;   // Giây để hoàn thành 1 đòn (thấp = nhanh hơn)
+    [SerializeField] protected float lifeSteal   = 0f;   // Hút máu (0–1, ví dụ 0.1 = 10%)
+
     [SerializeField] protected string objectName; // Tên của object
     [SerializeField] protected int objectId;      // ID của object
 
@@ -84,6 +98,31 @@ public class BaseObject : MonoBehaviour
 
         nameTextComponent = GetComponentInChildren<TMP_Text>();
         UpdateNameText();
+
+        StartCoroutine(RegenCoroutine());
+    }
+
+    /// <summary>
+    /// Coroutine tự động hồi HP và MP mỗi giây khi còn sống.
+    /// </summary>
+    private IEnumerator RegenCoroutine()
+    {
+        while (true)
+        {
+            yield return new WaitForSeconds(1f);
+
+            if (hp <= 0) continue; // Không hồi khi đã chết
+
+            if (hpRegen > 0f && hp < maxHp)
+            {
+                hp = Mathf.Min(maxHp, Mathf.RoundToInt(hp + hpRegen));
+            }
+
+            if (mpRegen > 0f && mp < maxMp)
+            {
+                mp = Mathf.Min(maxMp, Mathf.RoundToInt(mp + mpRegen));
+            }
+        }
     }
 
     // Properties với modifier virtual để các class con có thể override nếu cần
@@ -129,11 +168,131 @@ public class BaseObject : MonoBehaviour
         }
     }
     
+    public virtual int ATKPhysical
+    {
+        get => atkPhysical;
+        set => atkPhysical = Mathf.Max(0, value);
+    }
+
+    public virtual int ATKMagic
+    {
+        get => atkMagic;
+        set => atkMagic = Mathf.Max(0, value);
+    }
+
+    public virtual int DEFPhysical
+    {
+        get => defPhysical;
+        set => defPhysical = Mathf.Max(0, value);
+    }
+
+    public virtual int DEFMagic
+    {
+        get => defMagic;
+        set => defMagic = Mathf.Max(0, value);
+    }
+
     public virtual int ObjectId 
     { 
         get => objectId; 
         set => objectId = value; 
     }
+
+    public virtual float HPRegen
+    {
+        get => hpRegen;
+        set => hpRegen = Mathf.Max(0f, value);
+    }
+
+    public virtual float MPRegen
+    {
+        get => mpRegen;
+        set => mpRegen = Mathf.Max(0f, value);
+    }
+
+    /// <summary>Tầm đánh – khoảng cách tối đa để đòn đánh chạm mục tiêu.</summary>
+    public virtual float AttackRange
+    {
+        get => attackRange;
+        set => attackRange = Mathf.Max(0.1f, value);
+    }
+
+    /// <summary>Tốc độ đánh – giây cần để hoàn thành 1 đòn (thấp hơn = nhanh hơn).</summary>
+    public virtual float AttackSpeed
+    {
+        get => attackSpeed;
+        set => attackSpeed = Mathf.Max(0.05f, value);
+    }
+
+    /// <summary>Hút máu – tỉ lệ sát thương chuyển thành HP (0 = không hút, 1 = hút 100%).</summary>
+    public virtual float LifeSteal
+    {
+        get => lifeSteal;
+        set => lifeSteal = Mathf.Clamp01(value);
+    }
+
+    /// <summary>
+    /// Tốc độ di chuyển – override trong subclass nếu cần.
+    /// BuffSystem đọc/ghi qua property này.
+    /// </summary>
+    public virtual float MoveSpeed
+    {
+        get => 0f;
+        set { }  // Override trong Player để ghi vào moveSpeed
+    }
+
+    /// <summary>
+    /// Hệ số nhân hiệu quả hồi máu – override trong subclass.
+    /// BuffSystem đọc/ghi qua property này.
+    /// </summary>
+    public virtual float HealingPower
+    {
+        get => 0f;
+        set { }  // Override trong Player để ghi vào healingPower
+    }
+
+    /// <summary>
+    /// Nhận sát thương vật lý. Công thức: Dame nhận = Dame - DEF Vật Lý * 1.5 (tối thiểu 1).
+    /// </summary>
+    public virtual void TakePhysicalDamage(int rawDamage)
+    {
+        int actualDamage = Mathf.Max(1, rawDamage - Mathf.RoundToInt(defPhysical * 1.5f));
+        Debug.Log($"[{gameObject.name}] Nhận dame VẬT LÝ: {rawDamage} - DEF({defPhysical})*1.5 = {actualDamage}");
+        hp -= actualDamage;
+        if (hp <= 0)
+        {
+            Die();
+        }
+    }
+
+    /// <summary>
+    /// Nhận sát thương phép. Công thức: Dame nhận = Dame - DEF Phép * 1.5 (tối thiểu 1).
+    /// </summary>
+    public virtual void TakeMagicDamage(int rawDamage)
+    {
+        int actualDamage = Mathf.Max(1, rawDamage - Mathf.RoundToInt(defMagic * 1.5f));
+        Debug.Log($"[{gameObject.name}] Nhận dame PHÉP: {rawDamage} - DEF({defMagic})*1.5 = {actualDamage}");
+        hp -= actualDamage;
+        if (hp <= 0)
+        {
+            Die();
+        }
+    }
+
+    /// <summary>
+    /// Nhận sát thương theo loại (DamageType). Tự động chọn DEF phù hợp.
+    /// </summary>
+    public virtual void TakeDamage(int rawDamage, DamageType damageType)
+    {
+        if (damageType == DamageType.Physical)
+            TakePhysicalDamage(rawDamage);
+        else
+            TakeMagicDamage(rawDamage);
+    }
+
+    /// <summary>
+    /// Nhận sát thương thuần (không áp dụng DEF) – dùng cho True Damage, rơi xuống hố, v.v.
+    /// </summary>
     public virtual void TakeDamage(int damage)
     {
         hp -= damage;
@@ -155,9 +314,39 @@ public class BaseObject : MonoBehaviour
     
     public virtual void Heal(int amount)
     {
+        int before = hp;
         HP += amount; // Sử dụng property HP để tự động clamp
+        int healed = hp - before;
+
+        // TODO: Phát event khi có hệ thống UI / healing number
+        // OnHealed?.Invoke(healed);
     }
-    
+
+    /// <summary>
+    /// Hook gọi khi đối tượng NÀY gây sát thương cho target.
+    /// Dùng để kích hoạt LifeSteal, Advancement effects, v.v.
+    ///
+    /// TODO: Gọi hàm này từ Attack system sau khi tính damage thực tế.
+    /// Ví dụ: attacker.OnDealtDamage(actualDamage, target);
+    /// </summary>
+    /// <param name="actualDamage">Sát thương thực tế đã trừ DEF (không phải raw).</param>
+    /// <param name="target">Mục tiêu nhận dame.</param>
+    public virtual void OnDealtDamage(int actualDamage, BaseObject target)
+    {
+        // Hút máu (LifeSteal) – chạy ngay khi có chỉ số
+        if (lifeSteal > 0f)
+        {
+            int lifeStealHeal = Mathf.RoundToInt(actualDamage * lifeSteal);
+            Heal(lifeStealHeal);
+            // TODO: Hiện số hồi máu floating text
+            // FloatingTextManager.Show(gameObject, $"+{lifeStealHeal}", Color.green);
+        }
+
+        // TODO: Gọi advancement system's OnAttackHit nếu object là Player
+        // GetComponent<AdvancementSystem>()?.OnAttackHit(target, actualDamage);
+        // GetComponent<ArcherAdvancementSystem>()?.OnAttackHit(target, actualDamage);
+    }
+
     public virtual void RestoreMP(int amount)
     {
         MP += amount; // Sử dụng property MP để tự động clamp

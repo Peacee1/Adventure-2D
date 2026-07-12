@@ -1,342 +1,205 @@
-using System.Collections;
 using UnityEngine;
+using UnityEngine.AI;
 using UnityEngine.InputSystem;
 
-[RequireComponent(typeof(Rigidbody2D))]
-public class Player : BaseObject
+/// <summary>
+/// Local player controller — right-click to move (NavMesh pathfinding),
+/// D to dash, left-click to attack.
+///
+/// Implements IHumanController so Human knows nothing about the input source.
+/// SRP: only reads input and converts it to IHumanController values.
+/// DIP: Human receives IHumanController, not Player directly.
+///
+/// NavMesh setup required:
+///   1. Install AI Navigation package (Package Manager).
+///   2. Add NavMeshSurface to the scene and bake.
+///   3. Add NavMeshAgent to this GameObject.
+///
+/// Works without NavMeshAgent (falls back to direct linear movement).
+/// </summary>
+public class Player : MonoBehaviour, IHumanController
 {
-    [Header("Movement Settings")]
-    [SerializeField] private float moveSpeed = 5f;
+    // ─── State ────────────────────────────────────────────────────────────────
 
-    [Header("Dash Settings")]
-    [SerializeField] private float dashSpeed = 15f;
-    [SerializeField] private float dashDuration = 0.2f;
-    [SerializeField] private float dashCooldown = 1f;
+    private Human        human;
+    private NavMeshAgent agent;
+    private Camera       cachedCamera;       // cache tránh Camera.main mỗi frame
+    private float        lastSyncedSpeed;    // tránh set agent.speed mỗi frame
 
-    private Rigidbody2D rb;
-    private Vector2 moveInput;
-    private bool isDashing = false;
-    private bool isAttacking = false;
-    private float lastDashTime = -999f;
-    private Vector3 dashDirection;
-    private float lastLogTime = -999f;
-    private Vector2 rbVelocity;
+    private Vector2 destination;
+    private bool    hasDestination;
+    private bool    dashPressedThisFrame;
+    private bool    attackPressedThisFrame;
 
-    [Header("Attack Settings")]
-    [SerializeField] private float attackDuration = 0.4f;
+    private const float ARRIVAL_THRESHOLD = 0.25f;
 
-    [Header("Rotation Settings")]
-    [SerializeField] private float rotationSpeed = 360f; // degrees per second
-    private GameObject colliderObject;
-    private GameObject dashTrailObject;
-    private Animator animatorComponent;
+    // ─── IHumanController ────────────────────────────────────────────────────
 
-    protected override void Awake()
+    /// <summary>
+    /// Direction toward the NavMesh destination.
+    /// Returns Vector2.zero when arrived or no destination is set.
+    /// </summary>
+    public Vector2 MoveInput
     {
-        base.Awake();
-
-        // Safely destroy the 3D CharacterController to avoid component warning and logic conflict
-        CharacterController oldController = GetComponent<CharacterController>();
-        if (oldController != null)
+        get
         {
-            Destroy(oldController);
+            if (IsLocked || !hasDestination) return Vector2.zero;
+
+            // NavMesh path direction (preferred)
+            if (agent != null && agent.isOnNavMesh && !agent.pathPending)
+            {
+                // For 2D XY plane: agent moves in XY so desiredVelocity is in XY
+                Vector2 desired = new Vector2(agent.desiredVelocity.x, agent.desiredVelocity.y);
+                if (desired.sqrMagnitude > 0.01f) return desired.normalized;
+            }
+
+            // Fallback: direct linear movement toward destination
+            Vector2 toTarget = destination - (Vector2)transform.position;
+            if (toTarget.sqrMagnitude < ARRIVAL_THRESHOLD * ARRIVAL_THRESHOLD)
+            {
+                hasDestination = false;
+                return Vector2.zero;
+            }
+            return toTarget.normalized;
+        }
+    }
+
+    /// <summary>
+    /// Normalized direction from character toward the mouse cursor (world space).
+    /// Used for dash direction and Archer aim.
+    /// </summary>
+    public Vector2 AimDirection
+    {
+        get
+        {
+            if (human == null) return Vector2.right;
+            Camera cam = GetCamera();
+            if (cam == null) return Vector2.right;
+            Vector3 mouseWorld = cam.ScreenToWorldPoint(Input.mousePosition);
+            mouseWorld.z = human.transform.position.z;
+            Vector2 dir = ((Vector2)mouseWorld - (Vector2)human.transform.position).normalized;
+            return dir == Vector2.zero ? Vector2.right : dir;
+        }
+    }
+
+    public bool IsDashPressed    => !IsLocked && dashPressedThisFrame;
+    public bool IsDashPressedRaw => dashPressedThisFrame;            // không bị chặn bởi lock
+    public bool IsAttackPressed  => !IsLocked && attackPressedThisFrame;
+
+    private bool IsLocked => human != null && human.IsInputLocked;
+
+    // ─── Unity Lifecycle ──────────────────────────────────────────────────────
+
+    private void Awake()
+    {
+        human        = GetComponent<Human>();
+        agent        = GetComponent<NavMeshAgent>();
+        cachedCamera = Camera.main;
+
+        if (human == null)
+        {
+            Debug.LogError("[Player] No Human component (or subclass) found. " +
+                           "Make sure Player.cs and a Human subclass are on the same object.");
+            enabled = false;
+            return;
         }
 
-        // Initialize Rigidbody2D for top-down 2D movement
-        rb = GetComponent<Rigidbody2D>();
-        if (rb == null)
+        if (agent != null)
         {
-            rb = gameObject.AddComponent<Rigidbody2D>();
-        }
-
-        if (rb != null)
-        {
-            rb.gravityScale = 0f;
-            rb.constraints = RigidbodyConstraints2D.FreezeRotation;
+            agent.updatePosition = false; // Rigidbody2D controls actual position
+            agent.updateRotation = false;
+            agent.updateUpAxis   = false;
         }
         else
         {
-            Debug.LogError("[Player] Failed to get or add Rigidbody2D component!");
-        }
-
-        // Automatically create a non-trigger BoxCollider2D on the root for solid physical wall collisions
-        BoxCollider2D physicalCollider = gameObject.AddComponent<BoxCollider2D>();
-        physicalCollider.isTrigger = false;
-        if (spriteRenderer != null && spriteRenderer.sprite != null)
-        {
-            physicalCollider.size = spriteRenderer.sprite.bounds.size;
-        }
-
-        // Set default player stats
-        if (maxHp <= 0) maxHp = 100;
-        if (hp <= 0) hp = maxHp;
-        if (maxMp <= 0) maxMp = 50;
-        if (mp <= 0) mp = maxMp;
-
-        // Ensure Player sprite renders in front of ground tilemap (sorting layer/order)
-        if (spriteRenderer != null)
-        {
-            spriteRenderer.sortingOrder = 5;
-        }
-
-        // Dynamically ensure CameraFollow is on Main Camera
-        EnsureCameraFollow();
-    }
-
-    private void EnsureCameraFollow()
-    {
-        Camera mainCam = Camera.main;
-        if (mainCam != null)
-        {
-            if (mainCam.GetComponent<Freeland.Gameplay.CameraFollow>() == null)
-            {
-                mainCam.gameObject.AddComponent<Freeland.Gameplay.CameraFollow>();
-                Debug.Log("[Player] Dynamically attached CameraFollow to Main Camera.");
-            }
+            Debug.LogWarning("[Player] No NavMeshAgent found — using direct linear movement.");
         }
     }
 
     private void Start()
     {
-        FindBoxColliderObject();
-        FindDashTrailObject();
-        if (colliderObject != null)
-        {
-            colliderObject.transform.localRotation = Quaternion.identity;
-            animatorComponent = colliderObject.GetComponent<Animator>();
-        }
-    }
-
-    private void FindDashTrailObject()
-    {
-        // 1. Try to find the child 0 of Square GameObject directly
-        Transform squareTransform = transform.Find("Square");
-        if (squareTransform != null)
-        {
-            if (squareTransform.childCount > 0)
-            {
-                dashTrailObject = squareTransform.GetChild(0).gameObject;
-                Debug.Log($"[Player] Found dash trail: {dashTrailObject.name} as child of Square.");
-            }
-        }
-
-        // 2. Fall back to child 0 of colliderObject if not found yet
-        if (dashTrailObject == null && colliderObject != null && colliderObject.transform.childCount > 0)
-        {
-            dashTrailObject = colliderObject.transform.GetChild(0).gameObject;
-            Debug.Log($"[Player] Found dash trail: {dashTrailObject.name} as child of colliderObject.");
-        }
-
-        // 3. Set the trail object to inactive initially
-        if (dashTrailObject != null)
-        {
-            dashTrailObject.SetActive(false);
-        }
-        else
-        {
-            Debug.LogWarning("[Player] No dash trail object found (child 0 of Square or child 0 of colliderObject)!");
-        }
-    }
-
-    private void FindBoxColliderObject()
-    {
-        // 1. Search in children first (excluding this GameObject)
-        BoxCollider2D[] allBox2D = GetComponentsInChildren<BoxCollider2D>();
-        foreach (var col in allBox2D)
-        {
-            if (col.gameObject != gameObject)
-            {
-                colliderObject = col.gameObject;
-                Debug.Log($"[Player] Found BoxCollider2D on child GameObject: {colliderObject.name}");
-                return;
-            }
-        }
-
-        BoxCollider[] allBox3D = GetComponentsInChildren<BoxCollider>();
-        foreach (var col in allBox3D)
-        {
-            if (col.gameObject != gameObject)
-            {
-                colliderObject = col.gameObject;
-                Debug.Log($"[Player] Found BoxCollider on child GameObject: {colliderObject.name}");
-                return;
-            }
-        }
-
-        // 2. If not found in children, search on this GameObject itself
-        BoxCollider2D selfBox2D = GetComponent<BoxCollider2D>();
-        if (selfBox2D != null)
-        {
-            colliderObject = selfBox2D.gameObject;
-            Debug.Log($"[Player] Found BoxCollider2D on root GameObject: {colliderObject.name}");
-            return;
-        }
-
-        BoxCollider selfBox3D = GetComponent<BoxCollider>();
-        if (selfBox3D != null)
-        {
-            colliderObject = selfBox3D.gameObject;
-            Debug.Log($"[Player] Found BoxCollider on root GameObject: {colliderObject.name}");
-            return;
-        }
-        
-        Debug.LogWarning("[Player] No BoxCollider or BoxCollider2D found in children or root GameObject!");
+        human.SetController(this);
     }
 
     private void Update()
     {
-        HandleInput();
+        ReadInput();
+        SyncNavMeshAgent();
+    }
 
-        if (isDashing)
+    // ─── Private ──────────────────────────────────────────────────────────────
+
+    private void ReadInput()
+    {
+        // Right-click → set move destination
+        if (Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame)
         {
-            rbVelocity = (Vector2)dashDirection * dashSpeed;
-        }
-        else if (isAttacking)
-        {
-            // Khóa di chuyển trong lúc attack
-            rbVelocity = Vector2.zero;
-        }
-        else
-        {
-            rbVelocity = moveInput.normalized * moveSpeed;
+            SetMoveDestination(GetMouseWorldPosition());
         }
 
-        // Update animator speed based on movement status instead of rotating the collider
-        if (colliderObject != null)
-        {
-            if (animatorComponent == null)
-            {
-                animatorComponent = colliderObject.GetComponent<Animator>();
-            }
+        dashPressedThisFrame   = Keyboard.current != null && Keyboard.current.dKey.wasPressedThisFrame;
+        attackPressedThisFrame = Mouse.current    != null && Mouse.current.leftButton.wasPressedThisFrame;
+    }
 
-            if (animatorComponent != null)
-            {
-                bool isMoving = rbVelocity.sqrMagnitude > 0.01f;
-                animatorComponent.SetFloat("speed", isMoving ? 1f : 0f);
-            }
-        }
+    private void SetMoveDestination(Vector2 worldPos)
+    {
+        destination    = worldPos;
+        hasDestination = true;
 
-        // Rotate character based on left/right movement direction
-        if (rbVelocity.x < -0.01f)
+        if (agent != null && agent.isOnNavMesh)
         {
-            transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
-            if (nameTextComponent != null)
-            {
-                nameTextComponent.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
-            }
-        }
-        else if (rbVelocity.x > 0.01f)
-        {
-            transform.localRotation = Quaternion.identity;
-            if (nameTextComponent != null)
-            {
-                nameTextComponent.transform.localRotation = Quaternion.identity;
-            }
-        }
-
-        // Log diagnostics every 2 seconds to debug visibility
-        if (Time.time > lastLogTime + 2f)
-        {
-            lastLogTime = Time.time;
-            Camera cam = Camera.main;
-            string camInfo = cam != null ? $"Pos: {cam.transform.position}, Ortho: {cam.orthographic}, OrthoSize: {cam.orthographicSize}, CullingMask: {cam.cullingMask}" : "Null";
-            string srInfo = spriteRenderer != null ? $"Enabled: {spriteRenderer.enabled}, Order: {spriteRenderer.sortingOrder}, Layer: {spriteRenderer.sortingLayerName}, Mat: {(spriteRenderer.sharedMaterial != null ? spriteRenderer.sharedMaterial.name : "Null")}, Sprite: {(spriteRenderer.sprite != null ? spriteRenderer.sprite.name : "Null")}" : "Null";
-            Debug.Log($"[PlayerDebug] Player Pos: {transform.position}, Scale: {transform.localScale}, Active: {gameObject.activeInHierarchy}, SpriteRenderer: {srInfo} | Camera: {camInfo}");
+            // 2D game lives on the XY plane → NavMesh destination stays at Z=0
+            agent.SetDestination(new Vector3(worldPos.x, worldPos.y, 0f));
         }
     }
 
-    private void FixedUpdate()
+    /// <inheritdoc/>
+    public void StopNavigation()
     {
-        if (rb != null)
+        hasDestination = false;
+
+        if (agent != null && agent.isOnNavMesh)
         {
-            rb.linearVelocity = rbVelocity;
+            // Dừng agent tại vị trí hiện tại — không cho agent tiếp tục trượt sau khi bắt đầu attack
+            agent.SetDestination(transform.position);
         }
     }
 
-    private void HandleInput()
+    private void SyncNavMeshAgent()
     {
-        // 1. Read WASD movement using the new Input System Keyboard polling
-        moveInput = Vector2.zero;
-        if (Keyboard.current != null)
+        if (agent == null || !agent.isOnNavMesh) return;
+
+        // Chỉ set speed khi thực sự thay đổi — tránh NavMesh recalculate path mỗi frame
+        float currentSpeed = human.MoveSpeed;
+        if (!Mathf.Approximately(currentSpeed, lastSyncedSpeed))
         {
-            if (Keyboard.current.wKey.isPressed) moveInput.y += 1f;
-            if (Keyboard.current.sKey.isPressed) moveInput.y -= 1f;
-            if (Keyboard.current.aKey.isPressed) moveInput.x -= 1f;
-            if (Keyboard.current.dKey.isPressed) moveInput.x += 1f;
+            agent.speed      = currentSpeed;
+            lastSyncedSpeed  = currentSpeed;
         }
 
-        // 2. Dash via Right Click using the new Input System Mouse polling
-        if (Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame && !isAttacking)
-        {
-            TryDash();
-        }
+        // Keep the NavMesh agent in sync with the actual Rigidbody2D position
+        agent.nextPosition = transform.position;
 
-        // 3. Attack via Left Click using the new Input System Mouse polling
-        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+        // Detect arrival
+        if (!agent.pathPending && agent.remainingDistance <= ARRIVAL_THRESHOLD)
         {
-            Attack();
+            hasDestination = false;
+            agent.ResetPath();
         }
     }
 
-    private void TryDash()
+    /// <summary>Trả về Camera đã cache; tự refresh nếu bị null (scene reload, v.v.).</summary>
+    private Camera GetCamera()
     {
-        if (isDashing || Time.time < lastDashTime + dashCooldown) return;
-
-        // Determine dash direction (use current move input, default to Vector3.right if stationary)
-        Vector3 inputDir = new Vector3(moveInput.x, moveInput.y, 0f).normalized;
-        if (inputDir == Vector3.zero)
-        {
-            dashDirection = Vector3.right;
-        }
-        else
-        {
-            dashDirection = inputDir;
-        }
-
-        StartCoroutine(PerformDash());
+        if (cachedCamera == null) cachedCamera = Camera.main;
+        return cachedCamera;
     }
 
-    private IEnumerator PerformDash()
+    private Vector2 GetMouseWorldPosition()
     {
-        isDashing = true;
-        lastDashTime = Time.time;
-
-        if (dashTrailObject != null)
-        {
-            dashTrailObject.SetActive(true);
-        }
-
-        yield return new WaitForSeconds(dashDuration);
-
-        isDashing = false;
-
-        if (dashTrailObject != null)
-        {
-            dashTrailObject.SetActive(false);
-        }
-    }
-
-    public virtual void Attack()
-    {
-        if (isAttacking) return;
-
-        if (animatorComponent != null)
-        {
-            animatorComponent.SetTrigger("attack");
-            Debug.Log("[Player] Attack triggered - animator trigger 'attack' set.");
-        }
-        else
-        {
-            Debug.LogWarning("[Player] Attack triggered but animatorComponent is null!");
-        }
-
-        StartCoroutine(AttackLockRoutine());
-    }
-
-    private IEnumerator AttackLockRoutine()
-    {
-        isAttacking = true;
-        yield return new WaitForSeconds(attackDuration);
-        isAttacking = false;
+        Camera cam = GetCamera();
+        if (cam == null) return Vector2.zero;
+        Vector3 pos = cam.ScreenToWorldPoint(Input.mousePosition);
+        return new Vector2(pos.x, pos.y);
     }
 }
