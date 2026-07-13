@@ -45,14 +45,19 @@ func (h *RoomHandler) HandleJoin(payload []byte, session *player.Session) {
 		return
 	}
 
-	// Kiểm tra player đã ở trong phòng nào chưa (tránh join 2 lần)
+	// Kiểm tra player đã ở trong phòng nào chưa (reconnect case)
 	existingRoom := h.roomManager.FindRoomByPlayer(session.Player.ID)
 	if existingRoom != nil {
-		log.Printf("[RoomHandler] Player %d already in room %s — rejecting duplicate join",
+		log.Printf("[RoomHandler] Player %d already in room %s — trả về existing players (reconnect)",
 			session.Player.ID, existingRoom.ID)
+
+		// Lấy danh sách player hiện có trong phòng (trừ bản thân)
+		existingPlayers := existingRoom.GetExistingPlayers(session.Player.ID)
+
 		session.Send(packet.EncodeJoinRoomAck(packet.JoinRoomAckPacket{
-			Success: false,
-			RoomID:  "already_in_room",
+			Success:         true,
+			RoomID:          existingRoom.ID,
+			ExistingPlayers: existingPlayers,
 		}))
 		return
 	}

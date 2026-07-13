@@ -20,6 +20,7 @@ type TCPServer struct {
 	registerHandler *handler.RegisterHandler
 	roomHandler     *handler.RoomHandler
 	attackHandler   *handler.AttackHandler
+	movePathHandler *handler.MovePathHandler
 }
 
 // NewTCPServer tạo TCP server.
@@ -33,6 +34,7 @@ func NewTCPServer(addr string, rm *room.Manager, repo player.Repository) *TCPSer
 		registerHandler: handler.NewRegisterHandler(repo),
 		roomHandler:     handler.NewRoomHandler(rm),
 		attackHandler:   handler.NewAttackHandler(rm),
+		movePathHandler: handler.NewMovePathHandler(rm),
 	}
 }
 
@@ -99,6 +101,9 @@ func (s *TCPServer) dispatch(pTypeRaw uint16, payload []byte, sess *player.Sessi
 
 	case packet.TypeRespawnReq:
 		s.attackHandler.HandleRespawn(payload, sess)
+
+	case packet.TypeMovePath:
+		s.movePathHandler.Handle(payload, sess)
 
 	case packet.TypePing:
 		ping, err := packet.DecodePing(payload)

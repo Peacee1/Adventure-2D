@@ -22,9 +22,13 @@ public class NetworkManager : MonoBehaviour
     // ─── Config ───────────────────────────────────────────────────────────────
 
     [Header("Server")]
-    [SerializeField] private string serverIP  = "127.0.0.1";
-    [SerializeField] private int    tcpPort   = 7777;
-    [SerializeField] private int    udpPort   = 7778;
+    private string serverIP  = "54.169.108.73";
+
+    private int    tcpPort   = 7777;
+    private int    udpPort   = 7778;
+
+    public string ServerIP => serverIP;
+    public int    TcpPort  => tcpPort;
 
 
 
@@ -59,8 +63,14 @@ public class NetworkManager : MonoBehaviour
     private readonly Queue<Action> mainThreadActions = new Queue<Action>();
     private readonly object        queueLock         = new object();
 
-    private uint moveTimestamp;
+    private uint  moveTimestamp;
     private float moveInputTimer;
+
+    // ─── Stats (FPS + Ping) ───────────────────────────────────────────────────
+    private float statsTimer;
+    private float pingTimestamp;        // Time.time khi SendPing
+    public  float LatencyMs  { get; private set; } = -1f;  // RTT ms, -1 = chưa đo
+    public  float CurrentFPS { get; private set; }
 
     // ─── Unity Lifecycle ──────────────────────────────────────────────────────
 
@@ -78,6 +88,23 @@ public class NetworkManager : MonoBehaviour
         {
             while (mainThreadActions.Count > 0)
                 mainThreadActions.Dequeue()?.Invoke();
+        }
+
+        // ── FPS + Ping log mỗi giây ──────────────────────────────────────────
+        CurrentFPS  = 1f / Mathf.Max(Time.deltaTime, 0.0001f);
+        statsTimer += Time.deltaTime;
+        if (statsTimer >= 1f)
+        {
+            statsTimer = 0f;
+            string latencyStr = LatencyMs >= 0 ? $"{LatencyMs:F0}ms" : "---";
+            Debug.Log($"[Network] FPS={CurrentFPS:F0}  Ping={latencyStr}");
+
+            // Gửi Ping để đo latency vòng tiếp theo
+            if (IsConnected)
+            {
+                pingTimestamp = Time.time;
+                SendPing();
+            }
         }
     }
 
@@ -134,6 +161,18 @@ public class NetworkManager : MonoBehaviour
     {
         uint ts = (uint)(Time.time * 1000);
         var buf = PacketEncoder.EncodePing(ts);
+        SendTCP(buf);
+    }
+
+    /// <summary>
+    /// Gửi NavMesh path waypoints lên server qua TCP.
+    /// Server sẽ di chuyển player theo đúng các waypoints này thay vì đi thẳng.
+    /// Gọi sau khi NavMesh tính xong path (agent.path.corners available).
+    /// </summary>
+    public void SendMovePath(uint playerID, Vector3[] corners)
+    {
+        if (corners == null || corners.Length == 0) return;
+        var buf = PacketEncoder.EncodeMovePathPacket(playerID, corners);
         SendTCP(buf);
     }
 
@@ -359,13 +398,11 @@ public class NetworkManager : MonoBehaviour
                 break;
 
             case PacketType.Pong:
-                uint ts = BitConverter.ToUInt32(payload, 0);
-                uint now = (uint)(Time.time * 1000);
-                uint ping = now - ts;
+                // RTT phải tính trên main thread (Time.time không dùng được từ background thread)
                 Enqueue(() =>
                 {
-                    Debug.Log($"[Network] Ping: {ping}ms");
-                    OnPong?.Invoke(ping);
+                    LatencyMs = (Time.time - pingTimestamp) * 1000f;
+                    OnPong?.Invoke((uint)LatencyMs);
                 });
                 break;
         }

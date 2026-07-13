@@ -71,8 +71,13 @@ type Player struct {
 	Stats    Stats
 
 	// Vị trí và hướng di chuyển hiện tại (server authoritative)
-	Position  mathutil.Vector2
-	Direction mathutil.Vector2
+	Position    mathutil.Vector2
+	Direction   mathutil.Vector2
+	// Điểm đích cuối cùng (fallback khi không có path)
+	Destination mathutil.Vector2
+	// NavMesh path waypoints nhận từ client — server di chuyển theo đúng path này
+	Waypoints   []mathutil.Vector2
+	WaypointIdx int
 
 	// HP hiện tại
 	HP uint16
@@ -111,11 +116,18 @@ func New(id uint32, username string, job JobClass, conn net.Conn) *Player {
 	}
 }
 
+// GetMu trả về mutex để game_loop có thể lock trực tiếp (batch update hiệu quả hơn).
+func (p *Player) GetMu() *sync.RWMutex {
+	return &p.mu
+}
+
 // InitState khởi tạo vị trí và HP của player từ Database (thread-safe).
+// QUAN TRỌNG: phải set Destination = Position để game loop không di chuyển player về (0,0).
 func (p *Player) InitState(pos mathutil.Vector2, hp uint16) {
 	p.mu.Lock()
-	p.Position = pos
-	p.HP = hp
+	p.Position    = pos
+	p.Destination = pos // Game loop sẽ dừng ngay tại đây cho đến khi client gửi destination
+	p.HP          = hp
 	p.mu.Unlock()
 }
 
@@ -137,6 +149,66 @@ func (p *Player) SetDirection(dir mathutil.Vector2) {
 func (p *Player) SetState(s State) {
 	p.mu.Lock()
 	p.State = s
+	p.mu.Unlock()
+}
+
+// SetDestination cập nhật điểm đích di chuyển (thread-safe).
+func (p *Player) SetDestination(dest mathutil.Vector2) {
+	p.mu.Lock()
+	p.Destination = dest
+	p.mu.Unlock()
+}
+
+// GetDestination trả về điểm đích hiện tại (thread-safe).
+func (p *Player) GetDestination() mathutil.Vector2 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.Destination
+}
+
+// SetPath lưu NavMesh path waypoints từ client (thread-safe).
+// Game loop sẽ di chuyển player qua từng waypoint theo thứ tự.
+func (p *Player) SetPath(waypoints []mathutil.Vector2) {
+	p.mu.Lock()
+	p.Waypoints   = waypoints
+	p.WaypointIdx = 0
+	if len(waypoints) > 0 {
+		p.Destination = waypoints[len(waypoints)-1] // điểm cuối là destination thực
+	}
+	p.mu.Unlock()
+}
+
+// HasWaypoints trả về true nếu còn waypoint chưa đi tới.
+func (p *Player) HasWaypoints() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.WaypointIdx < len(p.Waypoints)
+}
+
+// GetCurrentWaypoint trả về waypoint hiện tại cần di chuyển tới.
+func (p *Player) GetCurrentWaypoint() (mathutil.Vector2, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.WaypointIdx >= len(p.Waypoints) {
+		return mathutil.Vector2{}, false
+	}
+	return p.Waypoints[p.WaypointIdx], true
+}
+
+// AdvanceWaypoint chuyển sang waypoint tiếp theo.
+func (p *Player) AdvanceWaypoint() {
+	p.mu.Lock()
+	if p.WaypointIdx < len(p.Waypoints) {
+		p.WaypointIdx++
+	}
+	p.mu.Unlock()
+}
+
+// ClearPath xóa path (player đã dừng lại).
+func (p *Player) ClearPath() {
+	p.mu.Lock()
+	p.Waypoints   = nil
+	p.WaypointIdx = 0
 	p.mu.Unlock()
 }
 

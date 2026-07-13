@@ -13,10 +13,12 @@ import (
 const MaxPlayers = 32
 
 // SpawnPoints là danh sách vị trí spawn mặc định trong phòng.
+// Sử dụng cho player mới hoặc respawn (khi chết).
+// NOTE: cạp nhật các điểm này cho phù hợp với NavMesh bản đồ thực tế.
 var SpawnPoints = []mathutil.Vector2{
-	{X: 0, Y: 0}, {X: 3, Y: 0}, {X: -3, Y: 0},
-	{X: 0, Y: 3}, {X: 0, Y: -3}, {X: 5, Y: 5},
-	{X: -5, Y: 5}, {X: 5, Y: -5}, {X: -5, Y: -5},
+	{X: -15, Y: 11}, {X: -12, Y: 8}, {X: -18, Y: 14},
+	{X: -10, Y: 11}, {X: -15, Y: 6}, {X: -20, Y: 11},
+	{X: -15, Y: 16}, {X: -20, Y: 6}, {X: -10, Y: 16},
 }
 
 // Room đại diện cho một phòng chơi.
@@ -56,10 +58,16 @@ func (r *Room) AddPlayer(p *player.Player) []packet.PlayerInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Lấy spawn point cho player mới
-	spawnIdx := len(r.players) % len(SpawnPoints)
-	spawn := SpawnPoints[spawnIdx]
-	p.SetPosition(spawn)
+	// Chỉ dùng SpawnPoint khi player chưa có vị trí hợp lệ (player mới, chưa lưu vị trí).
+	// Player cũ (lưu vị trí trong DB) giữ nguyên vị trí cuối cùng của họ.
+	if p.Position.X == 0 && p.Position.Y == 0 {
+		spawnIdx := len(r.players) % len(SpawnPoints)
+		spawn := SpawnPoints[spawnIdx]
+		p.SetPosition(spawn)
+		log.Printf("[Room] Player %d mới → spawn tại (%.1f, %.1f)", p.ID, spawn.X, spawn.Y)
+	} else {
+		log.Printf("[Room] Player %d quay lại → giữ vị trí DB (%.1f, %.1f)", p.ID, p.Position.X, p.Position.Y)
+	}
 
 	// Snapshot danh sách player hiện tại để gửi cho player mới
 	existing := make([]packet.PlayerInfo, 0, len(r.players))
@@ -84,8 +92,8 @@ func (r *Room) AddPlayer(p *player.Player) []packet.PlayerInfo {
 		Player: packet.PlayerInfo{
 			PlayerID: p.ID,
 			Username: p.Username,
-			X:        spawn.X,
-			Y:        spawn.Y,
+			X:        p.Position.X,
+			Y:        p.Position.Y,
 			HP:       p.Stats.MaxHP,
 			MaxHP:    p.Stats.MaxHP,
 			JobClass: uint8(p.JobClass),
@@ -129,6 +137,31 @@ func (r *Room) PlayerCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.players)
+}
+
+// GetExistingPlayers trả về danh sách PlayerInfo của tất cả player trong phòng,
+// ngoại trừ player có ID = excludeID (dùng cho reconnect/already_in_room case).
+func (r *Room) GetExistingPlayers(excludeID uint32) []packet.PlayerInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make([]packet.PlayerInfo, 0, len(r.players))
+	for _, p := range r.players {
+		if p.ID == excludeID {
+			continue
+		}
+		_, pos, _, hp, _ := p.Snapshot()
+		result = append(result, packet.PlayerInfo{
+			PlayerID: p.ID,
+			Username: p.Username,
+			X:        pos.X,
+			Y:        pos.Y,
+			HP:       hp,
+			MaxHP:    p.Stats.MaxHP,
+			JobClass: uint8(p.JobClass),
+		})
+	}
+	return result
 }
 
 // IsFull kiểm tra phòng đã đầy chưa.

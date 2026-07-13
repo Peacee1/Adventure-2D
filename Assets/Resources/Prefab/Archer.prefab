@@ -42,7 +42,6 @@ GameObject:
   - component: {fileID: 4106953706301004674}
   - component: {fileID: 7956645599175238819}
   - component: {fileID: 6923860107289181726}
-  - component: {fileID: 7699090182998322878}
   - component: {fileID: 4562282786056986447}
   - component: {fileID: 4990827621613491582}
   - component: {fileID: 4428763571017168326}
@@ -150,33 +149,6 @@ Animator:
   m_AllowConstantClipSamplingOptimization: 1
   m_KeepAnimatorStateOnDisable: 0
   m_WriteDefaultValuesOnDisable: 0
---- !u!50 &7699090182998322878
-Rigidbody2D:
-  serializedVersion: 5
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 608095230957772308}
-  m_BodyType: 0
-  m_Simulated: 1
-  m_UseFullKinematicContacts: 0
-  m_UseAutoMass: 0
-  m_Mass: 1
-  m_LinearDamping: 0
-  m_AngularDamping: 0.05
-  m_GravityScale: 1
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_Interpolate: 0
-  m_SleepingMode: 1
-  m_CollisionDetection: 0
-  m_Constraints: 0
 --- !u!61 &4562282786056986447
 BoxCollider2D:
   m_ObjectHideFlags: 0
@@ -207,7 +179,7 @@ BoxCollider2D:
   m_CallbackLayers:
     serializedVersion: 2
     m_Bits: 4294967295
-  m_IsTrigger: 0
+  m_IsTrigger: 1
   m_UsedByEffector: 0
   m_CompositeOperation: 0
   m_CompositeOrder: 0
@@ -267,7 +239,7 @@ NavMeshAgent:
   m_GameObject: {fileID: 608095230957772308}
   m_Enabled: 1
   m_AgentTypeID: 0
-  m_Radius: 3.6
+  m_Radius: 0.00001
   m_Speed: 0
   m_Acceleration: 8
   avoidancePriority: 50

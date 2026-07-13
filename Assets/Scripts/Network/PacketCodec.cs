@@ -66,6 +66,25 @@ public static class PacketEncoder
         return MakeFrame(PacketType.MoveInput, ms.ToArray());
     }
 
+    /// <summary>
+    /// Encode NavMesh path waypoints (corners) để gửi lên server qua TCP.
+    /// Server sẽ di chuyển player theo đúng các waypoints này.
+    /// Format: [PlayerID:uint32][Count:uint16][X:float32,Y:float32 x Count]
+    /// </summary>
+    public static byte[] EncodeMovePathPacket(uint playerID, Vector3[] corners)
+    {
+        int count = Mathf.Min(corners.Length, 64); // tối đa 64 waypoints
+        using var ms = new MemoryStream();
+        WriteUint32(ms, playerID);
+        WriteUint16(ms, (ushort)count);
+        for (int i = 0; i < count; i++)
+        {
+            WriteFloat32(ms, corners[i].x);
+            WriteFloat32(ms, corners[i].y);
+        }
+        return MakeFrame(PacketType.MovePath, ms.ToArray());
+    }
+
     // ── Combat ────────────────────────────────────────────────────────────────
 
     public static byte[] EncodeAttackReq(uint playerID, uint targetID, Vector2 dir)

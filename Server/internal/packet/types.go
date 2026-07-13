@@ -92,6 +92,18 @@ type MoveInputPacket struct {
 	Timestamp uint32 // client tick count (để server order packets)
 }
 
+// MovePathPacket: client gửi qua TCP khi NavMesh tính xong path.
+// Server sẽ di chuyển player theo đúng các waypoints này thay vì đi thẳng.
+type MovePathPacket struct {
+	PlayerID  uint32
+	Waypoints []WaypointVec2 // tối đa 64 điểm
+}
+
+// WaypointVec2 là 1 điểm trên path.
+type WaypointVec2 struct {
+	X, Y float32
+}
+
 // PlayerSnapshot: trạng thái 1 player tại 1 tick.
 type PlayerSnapshot struct {
 	PlayerID uint32

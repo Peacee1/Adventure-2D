@@ -59,13 +59,15 @@ func (h *MoveHandler) Handle(payload []byte, _ interface{}) {
 		return
 	}
 
-	newPos := mathutil.Vector2{X: req.DestX, Y: req.DestY}
-	p.SetPosition(newPos)
+	// Server-authoritative: lưu điểm đích, game loop sẽ di chuyển player về đó mỗi tick.
+	// Không set Position trực tiếp — tránh teleport.
+	dest := mathutil.Vector2{X: req.DestX, Y: req.DestY}
+	p.SetDestination(dest)
 	p.SetDirection(dir)
 
+	// State được cập nhật bởi game loop dựa trên khoảng cách đến destination.
+	// Ở đây chỉ set Move nếu có direction để WorldState gần nhất phản ánh đúng intent.
 	if dir.LengthSq() > 0.01 {
 		p.SetState(player.StateMove)
-	} else {
-		p.SetState(player.StateIdle)
 	}
 }

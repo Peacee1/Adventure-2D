@@ -15,9 +15,10 @@ public enum PacketType : ushort
     PlayerJoined = 0x0012,
     PlayerLeft   = 0x0013,
 
-    // Movement (UDP)
-    MoveInput  = 0x0020,
-    WorldState = 0x0021,
+    // Movement (UDP + TCP)
+    MoveInput  = 0x0020,  // C→S UDP: input di chuyển mỗi frame
+    WorldState = 0x0021,  // S→C UDP: snapshot toàn bộ
+    MovePath   = 0x0022,  // C→S TCP: NavMesh path waypoints
 
     // Combat
     AttackReq   = 0x0030,

@@ -247,6 +247,27 @@ func DecodeMoveInput(payload []byte) (MoveInputPacket, error) {
 	return p, nil
 }
 
+func DecodeMovePathPacket(payload []byte) (MovePathPacket, error) {
+	r := bytes.NewReader(payload)
+	var p MovePathPacket
+	var err error
+
+	if p.PlayerID, err = readUint32(r); err != nil { return p, err }
+
+	count, err := readUint16(r)
+	if err != nil { return p, err }
+	if count > 64 { count = 64 } // giới hạn an toàn
+
+	p.Waypoints = make([]WaypointVec2, 0, count)
+	for i := 0; i < int(count); i++ {
+		var x, y float32
+		if x, err = readFloat32(r); err != nil { return p, err }
+		if y, err = readFloat32(r); err != nil { return p, err }
+		p.Waypoints = append(p.Waypoints, WaypointVec2{X: x, Y: y})
+	}
+	return p, nil
+}
+
 func DecodeAttackReq(payload []byte) (AttackReqPacket, error) {
 	r := bytes.NewReader(payload)
 	var p AttackReqPacket

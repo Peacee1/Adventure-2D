@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using Freeland.Gameplay;
+using NavMeshPlus.Components;
 using UnityEngine;
+using UnityEngine.AI;
 
 /// <summary>
 /// GameSceneBootstrap — MonoBehaviour gắn vào SampleScene.
@@ -32,6 +34,19 @@ public class GameSceneBootstrap : MonoBehaviour
 
     private void Start()
     {
+        // ── Đổi gravity cho NavMesh+ 2D ─────────────────────────────────────────
+        // NavMesh+ xây NavMesh ở XY plane (Z ≈ -0.08, normal = +Z).
+        // NavMeshAgent tìm NavMesh bằng cách cast XUỐNG theo chiều gravity.
+        // Mặc định: gravity = (0, -9.81, 0) → cast xuống -Y → không bao giờ thấy XY plane.
+        // Fix: đổi sang (0, 0, -9.81) → cast xuống -Z → tìm đúng NavMesh ở XY plane.
+        // NOTE: chỉ ảnh hưởng 3D Physics (NavMeshAgent), KHÔNG ảnh hưởng Physics2D.
+        Physics.gravity = new Vector3(0f, 0f, -9.81f);
+
+        // ── Build NavMesh trước mọi thứ khác ───────────────────────────────────
+        // NavMeshComponents (Assets/NavMeshComponents) yêu cầu gọi BuildNavMesh()
+        // thủ công — không tự build như pre-baked NavMesh mặc định của Unity.
+        BuildAllNavMeshSurfaces();
+
         // Fallback nếu test trực tiếp từ game scene (không qua MenuScene)
         if (GameSession.Instance == null)
         {
@@ -59,6 +74,29 @@ public class GameSceneBootstrap : MonoBehaviour
         // Nếu đã join room trước khi scene load (vì LoadScene async),
         // remote players cần được spawn từ danh sách đã lưu
         SpawnExistingRemotePlayers();
+    }
+
+    /// <summary>
+    /// Tìm tất cả NavMeshSurface trong scene và build đồng bộ.
+    /// Phải gọi trước khi spawn player để NavMeshAgent hoạt động ngay lập tức.
+    /// </summary>
+    private void BuildAllNavMeshSurfaces()
+    {
+        // NavMeshSurface nằm trong global namespace (gói Assets/NavMeshComponents)
+        var surfaces = FindObjectsByType<NavMeshSurface>(FindObjectsSortMode.None);
+        if (surfaces == null || surfaces.Length == 0)
+        {
+            Debug.LogWarning("[Bootstrap] Không tìm thấy NavMeshSurface nào trong scene. " +
+                             "NavMesh phải pre-baked hoặc thêm NavMeshSurface component vào map.");
+            return;
+        }
+
+        foreach (var surface in surfaces)
+        {
+            Debug.Log($"[Bootstrap] Building NavMesh surface: {surface.gameObject.name}...");
+            surface.BuildNavMesh();
+            Debug.Log($"[Bootstrap] ✅ NavMesh built: {surface.gameObject.name}");
+        }
     }
 
     /// <summary>Spawn player không có network (test trực tiếp từ scene).</summary>
@@ -261,20 +299,15 @@ public class GameSceneBootstrap : MonoBehaviour
         // Activate → Awake/Start/OnEnable chạy (NavMeshAgent đã disabled)
         go.SetActive(true);
 
-        // Gắn RemotePlayer để nhận WorldState snapshot
+        // Tắt Human StateMachine để không conflict với RemotePlayer position control.
+        // RemotePlayer sẽ tự điều khiển Rigidbody2D và Animator trực tiếp.
+        var human = go.GetComponent<Human>();
+        if (human != null) human.enabled = false;
+
+        // Gắn RemotePlayer để nhận WorldState snapshot và điều khiển vị trí + animator
         var rp = go.GetComponent<RemotePlayer>();
         if (rp == null) rp = go.AddComponent<RemotePlayer>();
         rp.Initialize(info);
-
-        // Inject RemoteHumanController để Human StateMachine hoạt động đúng
-        var human = go.GetComponent<Human>();
-        if (human != null)
-        {
-            var ctrl = go.GetComponent<RemoteHumanController>();
-            if (ctrl == null) ctrl = go.AddComponent<RemoteHumanController>();
-            ctrl.LinkRemotePlayer(rp);
-            human.Controller = ctrl;
-        }
 
         remotePlayers[info.PlayerID] = rp;
         Debug.Log($"[Bootstrap] ✅ Remote player spawned: {go.name} at ({info.X:F1},{info.Y:F1})");

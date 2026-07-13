@@ -158,11 +158,36 @@ public class MenuScene : MonoBehaviour
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
+    private string debugStatusMessage = "Chưa kết nối";
+    private bool   debugIsError       = false;
+
     private void ShowStatus(string msg, bool isError = false)
     {
+        debugStatusMessage = msg;
+        debugIsError       = isError;
+
         if (statusText == null) return;
         statusText.text  = msg;
         statusText.color = isError ? UnityEngine.Color.red : UnityEngine.Color.white;
+    }
+
+    private void OnGUI()
+    {
+        // Tạo style chữ to rõ ràng
+        GUIStyle style = new GUIStyle();
+        style.fontSize = 24;
+        style.fontStyle = FontStyle.Bold;
+        style.normal.textColor = debugIsError ? UnityEngine.Color.red : UnityEngine.Color.green;
+
+        // Vẽ background tối phía sau chữ cho dễ đọc
+        Texture2D background = new Texture2D(1, 1);
+        background.SetPixel(0, 0, new Color(0f, 0f, 0f, 0.7f));
+        background.Apply();
+        GUI.skin.box.normal.background = background;
+
+        // Vẽ hộp trạng thái ở góc trên bên trái màn hình
+        GUI.Box(new Rect(10, 10, 800, 80), "");
+        GUI.Label(new Rect(20, 20, 780, 60), $"[SERVER STATUS]: {debugStatusMessage}\nTarget IP: {NetworkManager.Instance?.ServerIP}:{NetworkManager.Instance?.TcpPort}", style);
     }
 
     private static void EnsureGameSession()

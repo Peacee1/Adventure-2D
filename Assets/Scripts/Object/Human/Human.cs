@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.AI;
 using Freeland.StateMachine;
 using Freeland.Gameplay.HumanAnimation;
 
@@ -13,7 +14,6 @@ using Freeland.Gameplay.HumanAnimation;
 ///   Remote player → NetworkController.cs gắn thêm vào cùng GO
 ///   AI           → AIController.cs gắn thêm vào cùng GO
 /// </summary>
-[RequireComponent(typeof(Rigidbody2D))]
 public class Human : BaseObject
 {
     // ─── Serialized Settings ──────────────────────────────────────────────────
@@ -37,7 +37,8 @@ public class Human : BaseObject
 
     // ─── Runtime Internal ─────────────────────────────────────────────────────
 
-    private Rigidbody2D rb;
+    private Rigidbody2D rb;        // optional — chỉ dùng cho Dash khi không có NavMesh
+    private NavMeshAgent navAgent;  // cache để kiểm tra updatePosition mode
     private BuffSystem buffSystem;
     protected StateMachine<Human> stateMachine;
     private GameObject dashTrailObject;
@@ -69,9 +70,17 @@ public class Human : BaseObject
 
     // ─── Public Methods (gọi bởi States) ─────────────────────────────────────
 
+    /// <summary>
+    /// Set velocity — no-op khi NavMesh đang kiểm soát vị trí (updatePosition=true).
+    /// Dash sử dụng DashMove() để bypass NavMesh.
+    /// </summary>
     public void SetVelocity(Vector2 velocity)
     {
-        if (rb != null) rb.linearVelocity = velocity;
+        // Khi NavMesh đang kiểm soát transform → không đụng vào rb.velocity
+        if (navAgent != null && navAgent.enabled && navAgent.isOnNavMesh && navAgent.updatePosition)
+            return;
+        if (rb != null)
+            rb.linearVelocity = velocity;
     }
 
     public void RecordDash() => lastDashTime = Time.time;
@@ -83,11 +92,18 @@ public class Human : BaseObject
     }
 
     /// <summary>
-    /// Khoá / mở khoá vị trí Rigidbody2D.
-    /// Gọi Enter() của DashEndState để freeze hoàn toàn, Exit() để mở lại.
+    /// Khoá / mở khoá vị trí.
+    /// Khi NavMesh active: stop/resume agent.
+    /// Khi không có: freeze Rigidbody2D.
     /// </summary>
     public void FreezePosition(bool freeze)
     {
+        if (navAgent != null && navAgent.enabled && navAgent.isOnNavMesh && navAgent.updatePosition)
+        {
+            if (freeze) { navAgent.isStopped = true;  navAgent.velocity = Vector3.zero; }
+            else        { navAgent.isStopped = false; }
+            return;
+        }
         if (rb == null) return;
         rb.linearVelocity = Vector2.zero;
         rb.constraints = freeze
@@ -184,16 +200,16 @@ public class Human : BaseObject
         CharacterController oldController = GetComponent<CharacterController>();
         if (oldController != null) Destroy(oldController);
 
-        rb = GetComponent<Rigidbody2D>();
-        if (rb == null) rb = gameObject.AddComponent<Rigidbody2D>();
-        rb.gravityScale = 0f;
-        rb.constraints  = RigidbodyConstraints2D.FreezeRotation;
+        // Cache NavMeshAgent nếu có (LocalPlayer) — kiểm tra updatePosition mode
+        navAgent = GetComponent<NavMeshAgent>();
 
-        // Collider vật lý (non-trigger) để chặn tường
-        BoxCollider2D physicalCollider = gameObject.AddComponent<BoxCollider2D>();
-        physicalCollider.isTrigger = false;
-        if (spriteRenderer != null && spriteRenderer.sprite != null)
-            physicalCollider.size = spriteRenderer.sprite.bounds.size;
+        // Rigidbody2D là optional: chỉ cần khi không có NavMesh (NPC, Dash fallback)
+        rb = GetComponent<Rigidbody2D>();
+        if (rb != null)
+        {
+            rb.gravityScale = 0f;
+            rb.constraints  = RigidbodyConstraints2D.FreezeRotation;
+        }
 
         if (spriteRenderer != null) spriteRenderer.sortingOrder = 5;
     }

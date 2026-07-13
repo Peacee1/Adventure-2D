@@ -22,6 +22,7 @@ public class HumanDashState : BaseState<Human>
 
     private Vector2 dashDirection;
     private float elapsedTime;
+    private NavMeshAgent cachedAgent;
 
     public HumanDashState(Human owner, StateMachine<Human> stateMachine,
         HumanAnimatorController animatorController)
@@ -49,6 +50,14 @@ public class HumanDashState : BaseState<Human>
         owner.FaceDirection(dashDirection.x);
         animatorController.TriggerDash();
         owner.SetDashTrailActive(true);
+
+        // Tạm dừng NavMesh agent trong khi dash — tự kiểm soát vị trí
+        cachedAgent = owner.GetComponent<NavMeshAgent>();
+        if (cachedAgent != null)
+        {
+            cachedAgent.isStopped    = true;
+            cachedAgent.updatePosition = false;
+        }
     }
 
     public override void Update()
@@ -72,19 +81,28 @@ public class HumanDashState : BaseState<Human>
         // Chỉ 1 lần SamplePosition — radius nhỏ (0.1f) để kiểm tra nextPos có nằm trong NavMesh không
         if (!NavMesh.SamplePosition(nextPos, out _, NavMeshCheckRadius, NavMesh.AllAreas))
         {
-            // nextPos ngoài NavMesh → snap về currentPos (vị trí hiện tại luôn hợp lệ trong lúc dash)
+            // nextPos ngoài NavMesh → snap về currentPos và kết thúc dash
             owner.transform.position = currentPos;
-            owner.SetVelocity(Vector2.zero);
             stateMachine.ChangeState<HumanDashEndState>();
             return;
         }
 
-        // nextPos hợp lệ — di chuyển bình thường
-        owner.SetVelocity(velocity);
+        // nextPos hợp lệ — di chuyển trực tiếp qua transform (bypass NavMesh)
+        owner.transform.position = nextPos;
     }
 
     public override void Exit()
     {
         owner.SetDashTrailActive(false);
+
+        // Khôi phục NavMesh agent sau khi dash
+        if (cachedAgent != null)
+        {
+            cachedAgent.updatePosition = true;
+            cachedAgent.isStopped      = false;
+            // Warp về vị trí hiện tại để agent biết player đang ở đâu
+            if (cachedAgent.isOnNavMesh)
+                cachedAgent.Warp(owner.transform.position);
+        }
     }
 }
