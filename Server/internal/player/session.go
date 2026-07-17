@@ -6,29 +6,33 @@ import (
 	"sync/atomic"
 )
 
-// idCounter là atomic counter để tạo PlayerID tự tăng.
+// idCounter is an atomic counter for generating auto-incrementing PlayerIDs.
 var idCounter uint32
 
-// NextID sinh PlayerID mới (thread-safe).
+// NextID generates a new PlayerID (thread-safe).
 func NextID() uint32 {
 	return atomic.AddUint32(&idCounter, 1)
 }
 
-// Session quản lý vòng đời TCP của một player.
-// Mỗi Session chạy trong 1 goroutine riêng.
+// Session manages the TCP lifecycle for one player.
+// Each Session runs in its own goroutine.
 type Session struct {
 	Player *Player
 	conn   net.Conn
 
-	// OnPacket được gọi khi nhận được packet từ client.
-	// handler (tcp_server) sẽ set callback này.
+	// AccountID is set after the account is successfully authenticated.
+	// Used by GetCharacterListReq to know which account to query.
+	AccountID uint32
+
+	// OnPacket is called when a packet is received from the client.
+	// The dispatcher (tcp_server) sets this callback.
 	OnPacket func(pType uint16, payload []byte, session *Session)
 
-	// OnDisconnect được gọi khi kết nối bị đóng.
+	// OnDisconnect is called when the connection closes.
 	OnDisconnect func(session *Session)
 }
 
-// NewSession tạo Session mới cho một TCP connection.
+// NewSession creates a new Session for a TCP connection.
 func NewSession(conn net.Conn, p *Player) *Session {
 	return &Session{
 		Player: p,
@@ -36,8 +40,8 @@ func NewSession(conn net.Conn, p *Player) *Session {
 	}
 }
 
-// Start bắt đầu read loop cho session này.
-// Blocking — nên gọi trong goroutine riêng.
+// Start begins the read loop for this session.
+// Blocking — must be called in its own goroutine.
 func (s *Session) Start() {
 	clientAddr := s.conn.RemoteAddr().String()
 
@@ -54,7 +58,6 @@ func (s *Session) Start() {
 	for {
 		pTypeRaw, payload, err := readFrame(s.conn)
 		if err != nil {
-			// Connection closed hoặc lỗi đọc — log cụ thể
 			log.Printf("[Session] Read error from %s (player=%d %q): %v",
 				clientAddr, s.Player.ID, s.Player.Username, err)
 			return
@@ -68,7 +71,7 @@ func (s *Session) Start() {
 	}
 }
 
-// Send gửi frame qua TCP của session này.
+// Send writes a frame over this session's TCP connection.
 func (s *Session) Send(data []byte) {
 	if _, err := s.conn.Write(data); err != nil {
 		log.Printf("[Session] Send error to %s (player=%d %q): %v",
@@ -76,15 +79,15 @@ func (s *Session) Send(data []byte) {
 	}
 }
 
-// RemoteAddr trả về địa chỉ IP:Port của client.
+// RemoteAddr returns the client's IP:Port address.
 func (s *Session) RemoteAddr() net.Addr {
 	return s.conn.RemoteAddr()
 }
 
-// readFrame đọc 1 frame từ TCP: [type:2][len:2][payload:N]
-// BUG FIX: thêm giới hạn payLen để chặn OOM nếu client gửi packet khổng lồ.
+// readFrame reads one frame from the TCP stream: [type:2][len:2][payload:N]
+// Enforces a payload size limit to prevent OOM if a client sends an oversized packet.
 func readFrame(conn net.Conn) (uint16, []byte, error) {
-	const maxPayloadSize = 4096 // giới hạn payload tối đa 4KB
+	const maxPayloadSize = 4096 // max payload: 4 KB
 
 	header := make([]byte, 4)
 	if _, err := readFull(conn, header); err != nil {
@@ -94,7 +97,7 @@ func readFrame(conn net.Conn) (uint16, []byte, error) {
 	pType  := uint16(header[0]) | uint16(header[1])<<8
 	payLen := uint16(header[2]) | uint16(header[3])<<8
 
-	// BUG FIX: chặn OOM — payload quá lớn thì log + close connection
+	// Drop oversized payloads to prevent OOM
 	if payLen > maxPayloadSize {
 		log.Printf("[Session] readFrame: payload too large (%d > %d), dropping connection from %s",
 			payLen, maxPayloadSize, conn.RemoteAddr())

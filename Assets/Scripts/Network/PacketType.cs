@@ -1,6 +1,6 @@
 using System;
 
-/// <summary>PacketType enum mirror với Go server.</summary>
+/// <summary>PacketType enum mirroring the Go server.</summary>
 public enum PacketType : ushort
 {
     // Auth
@@ -8,6 +8,9 @@ public enum PacketType : ushort
     LoginAck    = 0x0002,
     RegisterReq = 0x0003,
     RegisterAck = 0x0004,
+    // 0x0005 = GuestLoginReq (server-side only)
+    GetCharListReq = 0x0006, // C→S Fetch 3 character slots
+    GetCharListAck = 0x0007, // S→C Character slot list (3 slots)
 
     // Room
     JoinRoomReq  = 0x0010,
@@ -16,16 +19,18 @@ public enum PacketType : ushort
     PlayerLeft   = 0x0013,
 
     // Movement (UDP + TCP)
-    MoveInput  = 0x0020,  // C→S UDP: input di chuyển mỗi frame
-    WorldState = 0x0021,  // S→C UDP: snapshot toàn bộ
+    MoveInput  = 0x0020,  // C→S UDP: movement input every frame
+    WorldState = 0x0021,  // S→C UDP: full world snapshot
     MovePath   = 0x0022,  // C→S TCP: NavMesh path waypoints
+    DashReq    = 0x0023,  // C→S TCP: Dash request
 
     // Combat
-    AttackReq   = 0x0030,
-    DamageEvent = 0x0031,
-    DieEvent    = 0x0032,
-    RespawnReq  = 0x0033,
-    RespawnAck  = 0x0034,
+    AttackReq        = 0x0030,
+    DamageEvent      = 0x0031,
+    DieEvent         = 0x0032,
+    RespawnReq       = 0x0033,
+    RespawnAck       = 0x0034,
+    ProjectileSpawn  = 0x0035, // S→C: server broadcasts projectile spawn
 
     // System
     Ping = 0xFF00,

@@ -57,8 +57,8 @@ func (h *RegisterHandler) Handle(payload []byte, session *player.Session) {
 		clientMsg := "registration failed"
 		if strings.Contains(errMsg, "already exists") {
 			clientMsg = "username already exists"
-		} else if strings.Contains(errMsg, "quá ngắn") || strings.Contains(errMsg, "quá dài") ||
-			strings.Contains(errMsg, "chỉ được chứa") {
+		} else if strings.Contains(errMsg, "too short") || strings.Contains(errMsg, "too long") ||
+			strings.Contains(errMsg, "only contain") {
 			clientMsg = errMsg // trả validation message trực tiếp
 		}
 

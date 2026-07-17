@@ -43,6 +43,15 @@ public static class PacketEncoder
         return MakeFrame(PacketType.RegisterReq, ms.ToArray());
     }
 
+    /// <summary>
+    /// Encode GetCharListReq — payload rỗng, server lấy AccountID từ session.
+    /// Gọi sau khi LoginAck thành công và trước khi chọn slot.
+    /// </summary>
+    public static byte[] EncodeGetCharListReq()
+    {
+        return MakeFrame(PacketType.GetCharListReq, new byte[0]);
+    }
+
     // ── Room ──────────────────────────────────────────────────────────────────
 
     public static byte[] EncodeJoinRoomReq(string roomID)
@@ -95,6 +104,25 @@ public static class PacketEncoder
         WriteFloat32(ms, dir.x);
         WriteFloat32(ms, dir.y);
         return MakeFrame(PacketType.AttackReq, ms.ToArray());
+    }
+
+    /// <summary>
+    /// Encodes a DashReq with a NavMesh-computed path.
+    /// Format: [PlayerID:uint32][TotalDistance:float32][Count:uint16][X:float32,Y:float32 × Count]
+    /// </summary>
+    public static byte[] EncodeDashReq(uint playerID, Vector3[] waypoints, float totalDistance)
+    {
+        int count = Mathf.Min(waypoints.Length, 16);
+        using var ms = new MemoryStream();
+        WriteUint32(ms, playerID);
+        WriteFloat32(ms, totalDistance);
+        WriteUint16(ms, (ushort)count);
+        for (int i = 0; i < count; i++)
+        {
+            WriteFloat32(ms, waypoints[i].x);
+            WriteFloat32(ms, waypoints[i].y);
+        }
+        return MakeFrame(PacketType.DashReq, ms.ToArray());
     }
 
     public static byte[] EncodeRespawnReq(uint playerID)
@@ -170,6 +198,7 @@ public static class PacketDecoder
         public float  X;
         public float  Y;
         public string MapName;
+        public string CharName; // Character's database name (e.g. peacee2_slot1)
         public string Message;
     }
 
@@ -188,6 +217,7 @@ public static class PacketDecoder
             X        = r.ReadSingle(),
             Y        = r.ReadSingle(),
             MapName  = ReadString(r),
+            CharName = ReadString(r), // Read character name
             Message  = ReadString(r),
         };
     }
@@ -200,6 +230,29 @@ public static class PacketDecoder
             Success = r.ReadByte() != 0,
             Message = ReadString(r),
         };
+    }
+
+    /// <summary>
+    /// Giải mã GetCharListAck từ server.
+    /// Format payload: [count:uint8][slot:uint8][exists:bool][charName:str][jobClass:uint8][level:uint16] × count
+    /// </summary>
+    public static CharacterData[] DecodeGetCharListAck(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        byte count = r.ReadByte();
+
+        var result = new CharacterData[count];
+        for (int i = 0; i < count; i++)
+        {
+            byte   slot     = r.ReadByte();
+            bool   exists   = r.ReadByte() != 0;
+            string charName = ReadString(r);
+            byte   jobClass = r.ReadByte();
+            ushort level    = r.ReadUInt16();
+
+            result[i] = new CharacterData(slot, exists, charName, jobClass, level);
+        }
+        return result;
     }
 
     // ── Room ──────────────────────────────────────────────────────────────────
@@ -288,6 +341,22 @@ public static class PacketDecoder
             X        = r.ReadSingle(),
             Y        = r.ReadSingle(),
             HP       = r.ReadUInt16(),
+        };
+    }
+
+    public static ProjectileSpawnPacket DecodeProjectileSpawn(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new ProjectileSpawnPacket
+        {
+            OwnerID  = r.ReadUInt32(),
+            X        = r.ReadSingle(),
+            Y        = r.ReadSingle(),
+            DirX     = r.ReadSingle(),
+            DirY     = r.ReadSingle(),
+            Speed    = r.ReadSingle(),
+            Range    = r.ReadSingle(),
+            ProjType = r.ReadByte(),
         };
     }
 

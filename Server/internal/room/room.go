@@ -1,10 +1,11 @@
-// Package room quản lý một phòng chơi và danh sách player bên trong.
+// Package room manages a game room and the players inside it.
 package room
 
 import (
 	"log"
 	"sync"
 
+	"adventure2d-server/internal/mapdata"
 	"adventure2d-server/internal/packet"
 	"adventure2d-server/internal/player"
 	"adventure2d-server/pkg/mathutil"
@@ -12,31 +13,46 @@ import (
 
 const MaxPlayers = 32
 
-// SpawnPoints là danh sách vị trí spawn mặc định trong phòng.
-// Sử dụng cho player mới hoặc respawn (khi chết).
-// NOTE: cạp nhật các điểm này cho phù hợp với NavMesh bản đồ thực tế.
-var SpawnPoints = []mathutil.Vector2{
-	{X: -15, Y: 11}, {X: -12, Y: 8}, {X: -18, Y: 14},
-	{X: -10, Y: 11}, {X: -15, Y: 6}, {X: -20, Y: 11},
-	{X: -15, Y: 16}, {X: -20, Y: 6}, {X: -10, Y: 16},
+// fallbackSpawns is used when no .mapdata file has been loaded for the map.
+// These match the server-default positions from the old hardcoded list.
+var fallbackSpawns = []mathutil.Vector2{
+	{X: -15.5, Y: 11.5}, {X: -12.5, Y: 8.5}, {X: -18.5, Y: 14.5},
+	{X: -10.5, Y: 11.5}, {X: -15.5, Y: 6.5}, {X: -20.5, Y: 11.5},
+	{X: -15.5, Y: 16.5}, {X: -20.5, Y: 6.5}, {X: -10.5, Y: 16.5},
 }
 
-// Room đại diện cho một phòng chơi.
+// FallbackSpawn returns a hardcoded spawn point for the n-th player (round-robin).
+// Used by attack_handler for respawn when no room reference is available.
+func FallbackSpawn(n int) mathutil.Vector2 {
+	return fallbackSpawns[n%len(fallbackSpawns)]
+}
+
+// Room represents a game room.
 type Room struct {
 	mu sync.RWMutex
 
 	ID      string
+	MapName string // Unity scene name — used to look up mapdata
 	players map[uint32]*player.Player
+
+	// mapData is the loaded static map data for this room's map. May be nil.
+	mapData *mapdata.MapData
 
 	// game loop
 	loop *GameLoop
 }
 
-// New tạo Room mới với ID cho trước.
-func New(id string) *Room {
+// New creates a new Room for the given map scene name.
+func New(id string, mapName string, mgr *mapdata.Manager) *Room {
+	var md *mapdata.MapData
+	if mgr != nil {
+		md = mgr.Get(mapName)
+	}
 	r := &Room{
 		ID:      id,
+		MapName: mapName,
 		players: make(map[uint32]*player.Player),
+		mapData: md,
 	}
 	r.loop = NewGameLoop(r)
 	return r
@@ -58,15 +74,14 @@ func (r *Room) AddPlayer(p *player.Player) []packet.PlayerInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Chỉ dùng SpawnPoint khi player chưa có vị trí hợp lệ (player mới, chưa lưu vị trí).
-	// Player cũ (lưu vị trí trong DB) giữ nguyên vị trí cuối cùng của họ.
+	// Use spawn point only for brand-new players (position == 0,0).
+	// Returning players keep their last saved DB position (already set by login_handler).
 	if p.Position.X == 0 && p.Position.Y == 0 {
-		spawnIdx := len(r.players) % len(SpawnPoints)
-		spawn := SpawnPoints[spawnIdx]
+		spawn := r.pickSpawn(len(r.players))
 		p.SetPosition(spawn)
-		log.Printf("[Room] Player %d mới → spawn tại (%.1f, %.1f)", p.ID, spawn.X, spawn.Y)
+		log.Printf("[Room] Player %d new → spawn at (%.1f, %.1f)", p.ID, spawn.X, spawn.Y)
 	} else {
-		log.Printf("[Room] Player %d quay lại → giữ vị trí DB (%.1f, %.1f)", p.ID, p.Position.X, p.Position.Y)
+		log.Printf("[Room] Player %d returning → kept DB position (%.1f, %.1f)", p.ID, p.Position.X, p.Position.Y)
 	}
 
 	// Snapshot danh sách player hiện tại để gửi cho player mới
@@ -202,7 +217,7 @@ func (r *Room) BroadcastTCP(data []byte, excludeID uint32) {
 	}
 }
 
-// Snapshot trả về slice PlayerSnapshot để game loop broadcast qua UDP.
+// Snapshot returns a slice of PlayerSnapshot for the game loop to broadcast via UDP.
 func (r *Room) Snapshot() []packet.PlayerSnapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -221,4 +236,15 @@ func (r *Room) Snapshot() []packet.PlayerSnapshot {
 		})
 	}
 	return snaps
+}
+
+// pickSpawn returns a spawn position for the n-th player (round-robin).
+// Prefers spawn points loaded from mapdata; falls back to fallbackSpawns.
+func (r *Room) pickSpawn(n int) mathutil.Vector2 {
+	if r.mapData != nil && len(r.mapData.Spawns) > 0 {
+		sp := r.mapData.Spawns[n%len(r.mapData.Spawns)]
+		return mathutil.Vector2{X: sp.X, Y: sp.Y}
+	}
+	fb := fallbackSpawns[n%len(fallbackSpawns)]
+	return fb
 }

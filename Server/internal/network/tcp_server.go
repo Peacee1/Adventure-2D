@@ -16,25 +16,29 @@ type TCPServer struct {
 	roomManager *room.Manager
 	dbRepo      player.Repository
 
-	loginHandler    *handler.LoginHandler
-	registerHandler *handler.RegisterHandler
-	roomHandler     *handler.RoomHandler
-	attackHandler   *handler.AttackHandler
-	movePathHandler *handler.MovePathHandler
+	loginHandler         *handler.LoginHandler
+	registerHandler      *handler.RegisterHandler
+	roomHandler          *handler.RoomHandler
+	attackHandler        *handler.AttackHandler
+	movePathHandler      *handler.MovePathHandler
+	characterListHandler *handler.CharacterListHandler
+	dashHandler          *handler.DashHandler
 }
 
 // NewTCPServer tạo TCP server.
 func NewTCPServer(addr string, rm *room.Manager, repo player.Repository) *TCPServer {
 	log.Printf("[TCP] Initializing TCP server on %s", addr)
 	return &TCPServer{
-		addr:            addr,
-		roomManager:     rm,
-		dbRepo:          repo,
-		loginHandler:    handler.NewLoginHandler(rm, repo),
-		registerHandler: handler.NewRegisterHandler(repo),
-		roomHandler:     handler.NewRoomHandler(rm),
-		attackHandler:   handler.NewAttackHandler(rm),
-		movePathHandler: handler.NewMovePathHandler(rm),
+		addr:                 addr,
+		roomManager:          rm,
+		dbRepo:               repo,
+		loginHandler:         handler.NewLoginHandler(rm, repo),
+		registerHandler:      handler.NewRegisterHandler(repo),
+		roomHandler:          handler.NewRoomHandler(rm),
+		attackHandler:        handler.NewAttackHandler(rm),
+		movePathHandler:      handler.NewMovePathHandler(rm),
+		characterListHandler: handler.NewCharacterListHandler(repo),
+		dashHandler:          handler.NewDashHandler(rm),
 	}
 }
 
@@ -104,6 +108,12 @@ func (s *TCPServer) dispatch(pTypeRaw uint16, payload []byte, sess *player.Sessi
 
 	case packet.TypeMovePath:
 		s.movePathHandler.Handle(payload, sess)
+
+	case packet.TypeDashReq:
+		s.dashHandler.Handle(payload, sess)
+
+	case packet.TypeGetCharListReq:
+		s.characterListHandler.Handle(payload, sess)
 
 	case packet.TypePing:
 		ping, err := packet.DecodePing(payload)

@@ -118,13 +118,33 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 		record.Username, record.ID, record.JobClass, record.HP, record.X, record.Y)
 
 	// 4. Đồng bộ dữ liệu nhân vật vào session
-	session.Player.ID       = record.ID
-	session.Player.Username = record.Username
-	session.Player.JobClass = record.JobClass
-	session.Player.Stats    = player.DefaultStats(record.JobClass)
-	session.Player.Level    = record.Level
-	session.Player.Exp      = record.Exp
-	session.Player.MapName  = record.MapName
+	session.Player.ID        = record.ID
+	session.Player.Username  = record.Username
+	session.Player.JobClass  = record.JobClass
+	session.Player.Level     = record.Level
+	session.Player.Exp       = record.Exp
+	session.Player.MapName   = record.MapName
+	session.Player.CreatedAt = record.CreatedAt
+	session.Player.Inventory = record.Inventory
+	session.Player.Buffs     = record.Buffs
+	session.Player.Skills    = record.Skills
+
+	// Populate Stats from DB record. AttackSpeed falls back to DefaultStats if not stored yet.
+	defaultStats := player.DefaultStats(record.JobClass)
+	attackSpeed := record.AttackSpeed
+	if attackSpeed == 0 {
+		attackSpeed = defaultStats.AttackSpeed
+	}
+	session.Player.Stats = player.Stats{
+		MaxHP:       record.MaxHP,
+		ATKPhysical: record.ATKPhysical,
+		ATKMagic:    record.ATKMagic,
+		DEFPhysical: record.DEFPhysical,
+		DEFMagic:    record.DEFMagic,
+		AttackRange: record.AttackRange,
+		MoveSpeed:   record.MoveSpeed,
+		AttackSpeed: attackSpeed,
+	}
 
 	// Hồi máu nếu HP = 0 (tránh spawn chết)
 	hp := record.HP
@@ -132,13 +152,24 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 		hp = session.Player.Stats.MaxHP
 		log.Printf("[LoginHandler] Character HP=0 → restored to MaxHP=%d", hp)
 	}
-	session.Player.InitState(mathutil.Vector2{X: record.X, Y: record.Y}, hp)
 
 	mapName := record.MapName
 	if mapName == "" { mapName = "Map1" }
 
+	// Guard against stale out-of-bounds positions saved before walkability was enforced.
+	// SafeSpawn returns the same position if walkable, or the map's default spawn if not.
+	spawnX, spawnY := player.SafeSpawn(mapName, record.X, record.Y)
+	if spawnX != record.X || spawnY != record.Y {
+		log.Printf("[LoginHandler] Position (%.2f,%.2f) is outside Ground tilemap → reset to safe spawn (%.2f,%.2f)",
+			record.X, record.Y, spawnX, spawnY)
+	}
+	session.Player.InitState(mathutil.Vector2{X: spawnX, Y: spawnY}, hp)
+
 	log.Printf("[LoginHandler] Login OK: %s (ID=%d) → Char=%s (ID=%d) Job=%d Level=%d Map=%q Pos=(%.2f,%.2f) from %s",
 		req.Username, accountID, record.Username, record.ID, record.JobClass, record.Level, mapName, record.X, record.Y, clientAddr)
+
+	// Lưu AccountID vào session để CharacterListHandler có thể dùng sau
+	session.AccountID = accountID
 
 	session.Send(packet.EncodeLoginAck(packet.LoginAckPacket{
 		Success:  true,
@@ -148,9 +179,10 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 		Exp:      uint32(record.Exp),
 		HP:       hp,
 		MaxHP:    session.Player.Stats.MaxHP,
-		X:        record.X,
-		Y:        record.Y,
+		X:        spawnX,
+		Y:        spawnY,
 		MapName:  mapName,
+		CharName: record.Username,
 		Message:  "OK",
 	}))
 }

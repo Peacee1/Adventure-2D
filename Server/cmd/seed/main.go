@@ -18,7 +18,7 @@ func main() {
 		dbPath = os.Args[1]
 	}
 
-	database, err := db.New(dbPath)
+	database, err := db.NewDatabase(dbPath)
 	if err != nil {
 		log.Fatalf("DB init error: %v", err)
 	}

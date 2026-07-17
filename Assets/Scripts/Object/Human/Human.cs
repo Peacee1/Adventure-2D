@@ -29,11 +29,7 @@ public class Human : BaseObject
     [SerializeField] private float moveSpeed = 5f;
 
     [Header("Dash Settings")]
-    [SerializeField] private float dashSpeedMultiplier = 2.5f;  // 250% MoveSpeed
-    private float dashDuration = 0.7f;
-    [SerializeField] private float dashCooldown = 1f;
-    private float dashEndLag = 0.6f;
-
+    [SerializeField] private float dashSpeedMultiplier = 2.5f; // kept for reference only — server drives dash physics
 
     // ─── Runtime Internal ─────────────────────────────────────────────────────
 
@@ -42,7 +38,6 @@ public class Human : BaseObject
     private BuffSystem buffSystem;
     protected StateMachine<Human> stateMachine;
     private GameObject dashTrailObject;
-    private float lastDashTime = -999f;
 
     // ─── Public Read-Only API (dùng bởi States) ───────────────────────────────
 
@@ -52,21 +47,13 @@ public class Human : BaseObject
     /// </summary>
     public IHumanController Controller { get; set; }
 
-    /// <summary>Animator controller — shared logic giao tiếp với Unity Animator.</summary>
+    /// <summary>Animator controller — shared logic for Unity Animator communication.</summary>
     public HumanAnimatorController AnimatorController { get; private set; }
 
-    /// <summary>Khi true, mọi input (WASD, Dash, Attack) đều bị chặn.</summary>
-    public bool IsInputLocked { get; private set; }
-
-    /// <summary>Tốc độ dash = MoveSpeed × dashSpeedMultiplier (mặc định 250%).</summary>
+    /// <summary>Dash speed = MoveSpeed × dashSpeedMultiplier (default 250%) — for reference only.</summary>
     public float DashSpeed     => moveSpeed * dashSpeedMultiplier;
-    public float DashDuration  => dashDuration;
-    public float DashEndLag    => dashEndLag;
-    /// <summary>Thời gian 1 đòn đánh (giây) — lấy từ AttackSpeed của BaseObject.</summary>
+    /// <summary>Attack animation duration — passed to AttackState for animator speed scaling.</summary>
     public float AttackDuration => AttackSpeed;
-
-    /// <summary>True nếu dash cooldown đã hết và có thể dash lại.</summary>
-    public bool CanDash => Time.time >= lastDashTime + dashCooldown;
 
     // ─── Public Methods (gọi bởi States) ─────────────────────────────────────
 
@@ -83,12 +70,52 @@ public class Human : BaseObject
             rb.linearVelocity = velocity;
     }
 
-    public void RecordDash() => lastDashTime = Time.time;
+    public void RecordDash() { /* no-op — cooldown managed by server */ }
 
     public void SetDashTrailActive(bool active)
     {
         if (dashTrailObject != null)
             dashTrailObject.SetActive(active);
+    }
+
+    // ─── Server-driven State Control ─────────────────────────────────────────
+
+    /// <summary>
+    /// Forces the client StateMachine to the state matching the server's broadcast.
+    /// Called by LocalPlayer every time the server state changes in WorldState.
+    /// Maps server State IDs (0-5) to client SM states.
+    /// </summary>
+    public void ForceState(byte serverState)
+    {
+        if (stateMachine == null) return;
+
+        switch (serverState)
+        {
+            case 0: // Idle
+                if (!stateMachine.IsInState<HumanIdleState>())
+                    stateMachine.ChangeState<HumanIdleState>();
+                break;
+            case 1: // Move
+                if (!stateMachine.IsInState<HumanMoveState>())
+                    stateMachine.ChangeState<HumanMoveState>();
+                break;
+            case 2: // Dash
+                if (!stateMachine.IsInState<HumanDashState>())
+                    stateMachine.ChangeState<HumanDashState>();
+                break;
+            case 3: // Attack
+                if (!stateMachine.IsInState<HumanAttackState>())
+                    stateMachine.ChangeState<HumanAttackState>();
+                break;
+            case 4: // Dead
+                if (!stateMachine.IsInState<HumanIdleState>())
+                    stateMachine.ChangeState<HumanIdleState>();
+                break;
+            case 5: // DashEnd
+                if (!stateMachine.IsInState<HumanDashEndState>())
+                    stateMachine.ChangeState<HumanDashEndState>();
+                break;
+        }
     }
 
     /// <summary>
@@ -143,15 +170,7 @@ public class Human : BaseObject
         Debug.Log($"[Human:{gameObject.name}] Controller set to {controller?.GetType().Name ?? "null"}");
     }
 
-    /// <summary>
-    /// Khoá/mở khoá input. Khi locked = true, Player.cs trả về Vector2.zero cho MoveInput
-    /// và false cho Dash/Attack — Human hoàn toàn không nhận lệnh từ controller.
-    /// Gọi từ State (VD: DashEndState) để lockout tạm thời.
-    /// </summary>
-    public void LockInput(bool locked)
-    {
-        IsInputLocked = locked;
-    }
+
 
     // ─── Public Entry Points (gọi từ ngoài hoặc skill system) ────────────────
 

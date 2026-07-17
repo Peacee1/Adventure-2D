@@ -10,8 +10,8 @@ import (
 
 	"adventure2d-server/internal/player"
 
-	_ "modernc.org/sqlite"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
 
 // Validation constants
@@ -78,7 +78,7 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-// migrate tạo bảng accounts và players (nhân vật) nếu chưa tồn tại.
+// migrate tạo bảng accounts, players và transactions nếu chưa tồn tại.
 func (d *Database) migrate() error {
 	log.Println("[DB] Running migrations...")
 	query := `
@@ -93,26 +93,58 @@ func (d *Database) migrate() error {
 		account_id INTEGER NOT NULL,
 		slot INTEGER NOT NULL,
 		username TEXT UNIQUE NOT NULL,
-		job_class INTEGER DEFAULT 1, -- Mặc định là Cung thủ (Archer - 1)
+		job_class INTEGER DEFAULT 1,          -- Mặc định là Cung thủ (Archer - 1)
 		x REAL DEFAULT 0.0,
 		y REAL DEFAULT 0.0,
-		hp INTEGER DEFAULT 800,      -- Archer MaxHP mặc định là 800
-		level INTEGER DEFAULT 1,     -- Level nhân vật (bắt đầu từ 1)
-		exp INTEGER DEFAULT 0,       -- EXP hiện tại
-		map_name TEXT DEFAULT 'Map1', -- Scene cuối cùng player đã đứng
+		hp INTEGER DEFAULT 800,
+		level INTEGER DEFAULT 1,
+		exp INTEGER DEFAULT 0,
+		map_name TEXT DEFAULT 'Map1',
+		max_hp INTEGER DEFAULT 800,
+		atk_physical INTEGER DEFAULT 80,
+		atk_magic INTEGER DEFAULT 10,
+		def_physical INTEGER DEFAULT 30,
+		def_magic INTEGER DEFAULT 20,
+		attack_range REAL DEFAULT 15.0,
+		move_speed REAL DEFAULT 10.0,
+		attack_speed REAL DEFAULT 1.0,
+		inventory TEXT DEFAULT '',
+		buffs TEXT DEFAULT '',
+		skills TEXT DEFAULT '',
+		created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY(account_id) REFERENCES accounts(id),
 		UNIQUE(account_id, slot)
 	);
+	CREATE TABLE IF NOT EXISTS transactions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		player_id INTEGER NOT NULL,
+		amount INTEGER NOT NULL DEFAULT 0,
+		description TEXT NOT NULL DEFAULT '',
+		timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY(player_id) REFERENCES players(id)
+	);
 	CREATE INDEX IF NOT EXISTS idx_accounts_username ON accounts(username);
 	CREATE INDEX IF NOT EXISTS idx_players_account_slot ON players(account_id, slot);
-	-- Migration: thêm cột level/exp nếu DB cũ chưa có
+	CREATE INDEX IF NOT EXISTS idx_transactions_player ON transactions(player_id);
 	`
-	// Migrate cột level và exp cho DB đã tồn tại (ALTER TABLE IF NOT EXISTS cột)
+	// Migrate backward-compatible: thêm cột mới vào DB cũ nếu chưa có
 	for _, alterSQL := range []string{
 		`ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1`,
 		`ALTER TABLE players ADD COLUMN exp INTEGER DEFAULT 0`,
 		`ALTER TABLE players ADD COLUMN map_name TEXT DEFAULT 'Map1'`,
 		`ALTER TABLE accounts ADD COLUMN device_id TEXT`,
+		`ALTER TABLE players ADD COLUMN max_hp INTEGER DEFAULT 800`,
+		`ALTER TABLE players ADD COLUMN atk_physical INTEGER DEFAULT 80`,
+		`ALTER TABLE players ADD COLUMN atk_magic INTEGER DEFAULT 10`,
+		`ALTER TABLE players ADD COLUMN def_physical INTEGER DEFAULT 30`,
+		`ALTER TABLE players ADD COLUMN def_magic INTEGER DEFAULT 20`,
+		`ALTER TABLE players ADD COLUMN attack_range REAL DEFAULT 15.0`,
+		`ALTER TABLE players ADD COLUMN move_speed REAL DEFAULT 10.0`,
+		`ALTER TABLE players ADD COLUMN attack_speed REAL DEFAULT 1.0`,
+		`ALTER TABLE players ADD COLUMN inventory TEXT DEFAULT ''`,
+		`ALTER TABLE players ADD COLUMN buffs TEXT DEFAULT ''`,
+		`ALTER TABLE players ADD COLUMN skills TEXT DEFAULT ''`,
+		`ALTER TABLE players ADD COLUMN created_at TEXT NOT NULL DEFAULT '2024-01-01T00:00:00Z'`, // SQLite ALTER TABLE không hỗ trợ CURRENT_TIMESTAMP (non-constant)
 	} {
 		_, alterErr := d.db.Exec(alterSQL)
 		if alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
@@ -132,13 +164,13 @@ func validateUsername(username string) error {
 	username = strings.TrimSpace(username)
 	l := len(username)
 	if l < minUsernameLen {
-		return fmt.Errorf("username quá ngắn (tối thiểu %d ký tự)", minUsernameLen)
+		return fmt.Errorf("username too short (minimum %d characters)", minUsernameLen)
 	}
 	if l > maxUsernameLen {
-		return fmt.Errorf("username quá dài (tối đa %d ký tự)", maxUsernameLen)
+		return fmt.Errorf("username too long (maximum %d characters)", maxUsernameLen)
 	}
 	if !usernameRegex.MatchString(username) {
-		return errors.New("username chỉ được chứa chữ cái, số, _ và -")
+		return errors.New("username can only contain alphanumeric characters, underscore, and hyphen")
 	}
 	return nil
 }
@@ -147,10 +179,10 @@ func validateUsername(username string) error {
 func validatePassword(password string) error {
 	l := len(password)
 	if l < minPasswordLen {
-		return fmt.Errorf("password quá ngắn (tối thiểu %d ký tự)", minPasswordLen)
+		return fmt.Errorf("password too short (minimum %d characters)", minPasswordLen)
 	}
 	if l > maxPasswordLen {
-		return fmt.Errorf("password quá dài (tối đa %d ký tự)", maxPasswordLen)
+		return fmt.Errorf("password too long (maximum %d characters)", maxPasswordLen)
 	}
 	return nil
 }
@@ -230,31 +262,52 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 	log.Printf("[DB] GetOrCreatePlayer: accountID=%d username=%q slot=%d", accountID, username, slot)
 
 	var rec player.PlayerRecord
-	var jobInt, hpInt int
+	var jobInt int
+	var hpInt, maxHPInt, atkPhy, atkMag, defPhy, defMag int
 
-	// Load đầy đủ cả level, exp, map_name
-	query := `SELECT id, account_id, slot, username, job_class, x, y, hp, level, exp, map_name
+	query := `SELECT id, account_id, slot, username, job_class, x, y, hp, level, exp, map_name,
+	                 max_hp, atk_physical, atk_magic, def_physical, def_magic,
+	                 attack_range, move_speed, attack_speed, inventory, buffs, skills,
+	                 COALESCE(created_at, CURRENT_TIMESTAMP)
 	          FROM players WHERE account_id = ? AND slot = ?`
 	err := d.db.QueryRow(query, accountID, slot).Scan(
 		&rec.ID, &rec.AccountID, &rec.Slot, &rec.Username,
 		&jobInt, &rec.X, &rec.Y, &hpInt,
 		&rec.Level, &rec.Exp, &rec.MapName,
+		&maxHPInt, &atkPhy, &atkMag, &defPhy, &defMag,
+		&rec.AttackRange, &rec.MoveSpeed, &rec.AttackSpeed,
+		&rec.Inventory, &rec.Buffs, &rec.Skills,
+		&rec.CreatedAt,
 	)
 
 	if err == sql.ErrNoRows {
 		log.Printf("[DB] GetOrCreatePlayer: no character at slot=%d for accountID=%d — creating new...", slot, accountID)
 
 		charName := fmt.Sprintf("%s_slot%d", username, slot+1)
+		defStats := player.DefaultStats(player.JobArcher)
 
-		// Nhân vật mới: Archer, Level 1, EXP 0, Map1, pos (0,0)
-		insertQuery := `INSERT INTO players (account_id, slot, username, job_class, x, y, hp, level, exp, map_name)
-		                VALUES (?, ?, ?, 1, 0.0, 0.0, 800, 1, 0, 'Map1')`
-		res, err := d.db.Exec(insertQuery, accountID, slot, charName)
+		insertQuery := `INSERT INTO players
+		                (account_id, slot, username, job_class, x, y, hp, level, exp, map_name,
+		                 max_hp, atk_physical, atk_magic, def_physical, def_magic,
+		                 attack_range, move_speed, attack_speed, inventory, buffs, skills)
+		                VALUES (?, ?, ?, 1, 0.0, 0.0, ?, 1, 0, 'Map1',
+		                        ?, ?, ?, ?, ?, ?, ?, ?, '', '', '')`
+		res, err := d.db.Exec(insertQuery, accountID, slot, charName,
+			int(defStats.MaxHP),
+			int(defStats.MaxHP), int(defStats.ATKPhysical), int(defStats.ATKMagic),
+			int(defStats.DEFPhysical), int(defStats.DEFMagic),
+			defStats.AttackRange, defStats.MoveSpeed, defStats.AttackSpeed,
+		)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 				charName = fmt.Sprintf("%s_%d_slot%d", username, accountID, slot+1)
 				log.Printf("[DB] GetOrCreatePlayer: charName conflict, retrying with name=%q", charName)
-				res, err = d.db.Exec(insertQuery, accountID, slot, charName)
+				res, err = d.db.Exec(insertQuery, accountID, slot, charName,
+					int(defStats.MaxHP),
+					int(defStats.MaxHP), int(defStats.ATKPhysical), int(defStats.ATKMagic),
+					int(defStats.DEFPhysical), int(defStats.DEFMagic),
+					defStats.AttackRange, defStats.MoveSpeed, defStats.AttackSpeed,
+				)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("create character query error: %w", err)
@@ -266,19 +319,30 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 			return nil, fmt.Errorf("get last insert id error: %w", err)
 		}
 
-		log.Printf("[DB] GetOrCreatePlayer: NEW character name=%q id=%d slot=%d job=Archer HP=800 level=1 map=Map1", charName, lastID, slot)
+		log.Printf("[DB] GetOrCreatePlayer: NEW character name=%q id=%d slot=%d job=Archer level=1 map=Map1", charName, lastID, slot)
 		return &player.PlayerRecord{
-			ID:        uint32(lastID),
-			AccountID: accountID,
-			Slot:      slot,
-			Username:  charName,
-			JobClass:  player.JobArcher,
-			X:         0.0,
-			Y:         0.0,
-			HP:        800,
-			Level:     1,
-			Exp:       0,
-			MapName:   "Map1",
+			ID:          uint32(lastID),
+			AccountID:   accountID,
+			Slot:        slot,
+			Username:    charName,
+			JobClass:    player.JobArcher,
+			X:           0.0,
+			Y:           0.0,
+			HP:          defStats.MaxHP,
+			Level:       1,
+			Exp:         0,
+			MapName:     "Map1",
+			MaxHP:       defStats.MaxHP,
+			ATKPhysical: defStats.ATKPhysical,
+			ATKMagic:    defStats.ATKMagic,
+			DEFPhysical: defStats.DEFPhysical,
+			DEFMagic:    defStats.DEFMagic,
+			AttackRange: defStats.AttackRange,
+			MoveSpeed:   defStats.MoveSpeed,
+			AttackSpeed: defStats.AttackSpeed,
+			Inventory:   "",
+			Buffs:       "",
+			Skills:      "",
 		}, nil
 
 	} else if err != nil {
@@ -287,24 +351,91 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 	}
 
 	if rec.MapName == "" { rec.MapName = "Map1" } // fallback an toàn
-	rec.JobClass = player.JobClass(jobInt)
-	rec.HP = uint16(hpInt)
-	log.Printf("[DB] GetOrCreatePlayer: LOADED name=%q id=%d job=%d HP=%d level=%d exp=%d map=%q pos=(%.2f,%.2f)",
-		rec.Username, rec.ID, rec.JobClass, rec.HP, rec.Level, rec.Exp, rec.MapName, rec.X, rec.Y)
+	rec.JobClass    = player.JobClass(jobInt)
+	rec.HP          = uint16(hpInt)
+	rec.MaxHP       = uint16(maxHPInt)
+	rec.ATKPhysical = uint16(atkPhy)
+	rec.ATKMagic    = uint16(atkMag)
+	rec.DEFPhysical = uint16(defPhy)
+	rec.DEFMagic    = uint16(defMag)
+
+	// If DB record has no stats (old DB, zeroed row), fall back to DefaultStats per job
+	if rec.MaxHP == 0 {
+		defStats := player.DefaultStats(rec.JobClass)
+		rec.MaxHP       = defStats.MaxHP
+		rec.ATKPhysical = defStats.ATKPhysical
+		rec.ATKMagic    = defStats.ATKMagic
+		rec.DEFPhysical = defStats.DEFPhysical
+		rec.DEFMagic    = defStats.DEFMagic
+		rec.AttackRange = defStats.AttackRange
+		rec.MoveSpeed   = defStats.MoveSpeed
+		rec.AttackSpeed = defStats.AttackSpeed
+	}
+
+	log.Printf("[DB] GetOrCreatePlayer: LOADED name=%q id=%d job=%d HP=%d/%d level=%d exp=%d map=%q pos=(%.2f,%.2f)",
+		rec.Username, rec.ID, rec.JobClass, rec.HP, rec.MaxHP, rec.Level, rec.Exp, rec.MapName, rec.X, rec.Y)
 	return &rec, nil
 }
 
-// Save cập nhật thông tin vị trí, HP, Job Class, Level, Exp, Map của nhân vật.
-func (d *Database) Save(p *player.Player) error {
-	id, pos, _, hp, _ := p.Snapshot()
-	log.Printf("[DB] Save: name=%q id=%d pos=(%.2f,%.2f) HP=%d job=%d map=%q",
-		p.Username, id, pos.X, pos.Y, hp, p.JobClass, p.MapName)
+// GetAllCharacters trả về thông tin tóm tắt của cả 3 slot nhân vật cho một tài khoản.
+// Slot nào chưa có nhân vật thì phần tử tương ứng sẽ là nil.
+func (d *Database) GetAllCharacters(accountID uint32) ([3]*player.PlayerRecord, error) {
+	log.Printf("[DB] GetAllCharacters: accountID=%d", accountID)
 
-	query := `UPDATE players SET job_class=?, x=?, y=?, hp=?, level=?, exp=?, map_name=? WHERE id=?`
+	query := `SELECT slot, username, job_class, level
+	          FROM players
+	          WHERE account_id = ? AND slot IN (0, 1, 2)
+	          ORDER BY slot ASC`
+
+	rows, err := d.db.Query(query, accountID)
+	if err != nil {
+		return [3]*player.PlayerRecord{}, fmt.Errorf("GetAllCharacters query error: %w", err)
+	}
+	defer rows.Close()
+
+	var result [3]*player.PlayerRecord
+	for rows.Next() {
+		var rec player.PlayerRecord
+		var jobInt int
+		if err := rows.Scan(&rec.Slot, &rec.Username, &jobInt, &rec.Level); err != nil {
+			return result, fmt.Errorf("GetAllCharacters scan error: %w", err)
+		}
+		rec.JobClass = player.JobClass(jobInt)
+		if rec.Slot <= 2 {
+			result[rec.Slot] = &rec
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return result, fmt.Errorf("GetAllCharacters rows error: %w", err)
+	}
+
+	log.Printf("[DB] GetAllCharacters: accountID=%d slot0=%v slot1=%v slot2=%v",
+		accountID,
+		result[0] != nil, result[1] != nil, result[2] != nil)
+	return result, nil
+}
+
+// Save cập nhật toàn bộ trạng thái nhân vật vào cơ sở dữ liệu.
+func (d *Database) Save(p *player.Player) error {
+	data := p.GetSaveData()
+	log.Printf("[DB] Save: name=%q id=%d pos=(%.2f,%.2f) HP=%d job=%d map=%q level=%d exp=%d",
+		p.Username, data.ID, data.Position.X, data.Position.Y,
+		data.HP, data.JobClass, data.MapName, data.Level, data.Exp)
+
+	query := `UPDATE players SET
+			job_class=?, x=?, y=?, hp=?, level=?, exp=?, map_name=?,
+			max_hp=?, atk_physical=?, atk_magic=?, def_physical=?, def_magic=?,
+			attack_range=?, move_speed=?,
+			inventory=?, buffs=?, skills=?
+		WHERE id=?`
 	result, err := d.db.Exec(query,
-		int(p.JobClass), pos.X, pos.Y, int(hp),
-		p.Level, p.Exp, p.MapName,
-		id)
+		int(data.JobClass), data.Position.X, data.Position.Y, int(data.HP),
+		data.Level, data.Exp, data.MapName,
+		int(data.Stats.MaxHP), int(data.Stats.ATKPhysical), int(data.Stats.ATKMagic),
+		int(data.Stats.DEFPhysical), int(data.Stats.DEFMagic),
+		data.Stats.AttackRange, data.Stats.MoveSpeed,
+		data.Inventory, data.Buffs, data.Skills,
+		data.ID)
 	if err != nil {
 		log.Printf("[DB] Save ERROR: %v", err)
 		return fmt.Errorf("save character error: %w", err)
@@ -312,11 +443,48 @@ func (d *Database) Save(p *player.Player) error {
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		log.Printf("[DB] Save WARN: no rows updated for id=%d", id)
+		log.Printf("[DB] Save WARN: no rows updated for id=%d", data.ID)
 	} else {
-		log.Printf("[DB] Save OK: id=%d saved (%d row)", id, rows)
+		log.Printf("[DB] Save OK: id=%d saved (%d row)", data.ID, rows)
 	}
-	return err
+	return nil
+}
+
+// AddTransaction ghi một bản ghi giao dịch mới cho nhân vật.
+func (d *Database) AddTransaction(playerID uint32, amount int, description string) error {
+	_, err := d.db.Exec(
+		`INSERT INTO transactions (player_id, amount, description) VALUES (?, ?, ?)`,
+		playerID, amount, description,
+	)
+	if err != nil {
+		return fmt.Errorf("AddTransaction error: %w", err)
+	}
+	log.Printf("[DB] AddTransaction: playerID=%d amount=%d desc=%q", playerID, amount, description)
+	return nil
+}
+
+// GetTransactions trả về toàn bộ lịch sử giao dịch của một nhân vật, sắp xếp theo thời gian mới nhất trước.
+func (d *Database) GetTransactions(playerID uint32) ([]player.TransactionRecord, error) {
+	rows, err := d.db.Query(
+		`SELECT id, player_id, amount, description, timestamp
+		 FROM transactions WHERE player_id = ? ORDER BY id DESC`,
+		playerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("GetTransactions query error: %w", err)
+	}
+	defer rows.Close()
+
+	var result []player.TransactionRecord
+	for rows.Next() {
+		var t player.TransactionRecord
+		if err := rows.Scan(&t.ID, &t.PlayerID, &t.Amount, &t.Description, &t.Timestamp); err != nil {
+			return nil, fmt.Errorf("GetTransactions scan error: %w", err)
+		}
+		result = append(result, t)
+	}
+	log.Printf("[DB] GetTransactions: playerID=%d count=%d", playerID, len(result))
+	return result, rows.Err()
 }
 
 // GuestLogin tự động tạo tài khoản guest theo deviceID nếu chưa có.

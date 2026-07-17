@@ -7,13 +7,13 @@ using System.Threading;
 using UnityEngine;
 
 /// <summary>
-/// NetworkManager — kết nối đến Go game server.
+/// NetworkManager — connects to the Go game server.
 ///
 /// TCP: Login, JoinRoom, Attack, Damage events (reliable).
-/// UDP: gửi MoveInput mỗi frame, nhận WorldState broadcast (low-latency).
+/// UDP: sends MoveInput every frame, receives WorldState broadcasts (low-latency).
 ///
-/// SRP: chỉ xử lý network I/O, không chứa game logic.
-/// Singleton pattern (chỉ 1 instance toàn game).
+/// SRP: handles network I/O only, contains no game logic.
+/// Singleton pattern (only 1 instance across the entire game).
 /// </summary>
 public class NetworkManager : MonoBehaviour
 {
@@ -22,15 +22,12 @@ public class NetworkManager : MonoBehaviour
     // ─── Config ───────────────────────────────────────────────────────────────
 
     [Header("Server")]
-    private string serverIP  = "54.169.108.73";
-
-    private int    tcpPort   = 7777;
-    private int    udpPort   = 7778;
+    private string serverIP = "54.169.108.73";
+    private int    tcpPort  = 7777;
+    private int    udpPort  = 7778;
 
     public string ServerIP => serverIP;
     public int    TcpPort  => tcpPort;
-
-
 
     // ─── Events ───────────────────────────────────────────────────────────────
 
@@ -44,22 +41,25 @@ public class NetworkManager : MonoBehaviour
     public event Action<DamageEventPacket>        OnDamageEvent;
     public event Action<DieEventPacket>           OnDieEvent;
     public event Action<RespawnAckPacket>         OnRespawnAck;
+    public event Action<ProjectileSpawnPacket>    OnProjectileSpawn;
     public event Action<uint>                     OnPong;
+    /// <summary>Fired when the server returns the 3-slot character list in response to GetCharListReq.</summary>
+    public event Action<CharacterData[]>          OnCharacterListReceived;
 
     // ─── State ────────────────────────────────────────────────────────────────
 
     public uint  LocalPlayerID { get; private set; }
     public byte  LocalJobClass  { get; private set; } = 1; // 1 = Archer (server default)
-    public bool  IsConnected   => tcpClient != null && tcpClient.Connected;
+    public bool  IsConnected   => tcpClient != null && tcpClient.Connected && tcpStream != null;
 
-    private TcpClient  tcpClient;
+    private TcpClient     tcpClient;
     private NetworkStream tcpStream;
-    private UdpClient  udpClient;
+    private UdpClient     udpClient;
 
     private Thread tcpReadThread;
     private Thread udpReadThread;
 
-    // Thread-safe queue để marshal network events sang main thread
+    // Thread-safe queue to marshal network events onto the main thread
     private readonly Queue<Action> mainThreadActions = new Queue<Action>();
     private readonly object        queueLock         = new object();
 
@@ -68,8 +68,8 @@ public class NetworkManager : MonoBehaviour
 
     // ─── Stats (FPS + Ping) ───────────────────────────────────────────────────
     private float statsTimer;
-    private float pingTimestamp;        // Time.time khi SendPing
-    public  float LatencyMs  { get; private set; } = -1f;  // RTT ms, -1 = chưa đo
+    private float pingTimestamp;        // Time.time when SendPing was called
+    public  float LatencyMs  { get; private set; } = -1f;  // RTT in ms, -1 = not yet measured
     public  float CurrentFPS { get; private set; }
 
     // ─── Unity Lifecycle ──────────────────────────────────────────────────────
@@ -79,18 +79,21 @@ public class NetworkManager : MonoBehaviour
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
         DontDestroyOnLoad(gameObject);
+
+        // Maintain connection and run game loop in the background to prevent desync
+        Application.runInBackground = true;
     }
 
     private void Update()
     {
-        // Xử lý các action từ network thread trên main thread
+        // Dispatch network thread actions on the main thread
         lock (queueLock)
         {
             while (mainThreadActions.Count > 0)
                 mainThreadActions.Dequeue()?.Invoke();
         }
 
-        // ── FPS + Ping log mỗi giây ──────────────────────────────────────────
+        // FPS + Ping log every second
         CurrentFPS  = 1f / Mathf.Max(Time.deltaTime, 0.0001f);
         statsTimer += Time.deltaTime;
         if (statsTimer >= 1f)
@@ -99,7 +102,6 @@ public class NetworkManager : MonoBehaviour
             string latencyStr = LatencyMs >= 0 ? $"{LatencyMs:F0}ms" : "---";
             Debug.Log($"[Network] FPS={CurrentFPS:F0}  Ping={latencyStr}");
 
-            // Gửi Ping để đo latency vòng tiếp theo
             if (IsConnected)
             {
                 pingTimestamp = Time.time;
@@ -115,26 +117,26 @@ public class NetworkManager : MonoBehaviour
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
-    /// <summary>Kết nối đến server và login với username, password và slot.</summary>
+    /// <summary>Connects to the server and logs in with username, password, and slot.</summary>
     public void Connect(string username, string password, byte slot)
     {
         StartCoroutine(ConnectRoutine(username, password, slot));
     }
 
-    /// <summary>Đăng ký tài khoản mới.</summary>
+    /// <summary>Registers a new account.</summary>
     public void RegisterAccount(string username, string password)
     {
         StartCoroutine(RegisterRoutine(username, password));
     }
 
-    /// <summary>Vào phòng — "" = matchmake tự động.</summary>
+    /// <summary>Joins a room — empty string triggers automatic matchmaking.</summary>
     public void JoinRoom(string roomID = "")
     {
         var buf = PacketEncoder.EncodeJoinRoomReq(roomID);
         SendTCP(buf);
     }
 
-    /// <summary>Gửi MoveInput qua UDP — gọi từ Player.Update().</summary>
+    /// <summary>Sends MoveInput over UDP — called from Player.Update().</summary>
     public void SendMoveInput(uint playerID, Vector2 dest, Vector2 dir)
     {
         moveTimestamp++;
@@ -142,21 +144,28 @@ public class NetworkManager : MonoBehaviour
         SendUDP(buf);
     }
 
-    /// <summary>Gửi AttackReq qua TCP.</summary>
+    /// <summary>Sends an AttackReq over TCP.</summary>
     public void SendAttack(uint playerID, uint targetID, Vector2 dir)
     {
         var buf = PacketEncoder.EncodeAttackReq(playerID, targetID, dir);
         SendTCP(buf);
     }
 
-    /// <summary>Gửi Respawn request.</summary>
+    /// <summary>Sends a DashReq with NavMesh-computed path over TCP.</summary>
+    public void SendDash(uint playerID, Vector3[] waypoints, float totalDistance)
+    {
+        var buf = PacketEncoder.EncodeDashReq(playerID, waypoints, totalDistance);
+        SendTCP(buf);
+    }
+
+    /// <summary>Sends a Respawn request.</summary>
     public void SendRespawn(uint playerID)
     {
         var buf = PacketEncoder.EncodeRespawnReq(playerID);
         SendTCP(buf);
     }
 
-    /// <summary>Ping để đo latency.</summary>
+    /// <summary>Sends a Ping to measure latency.</summary>
     public void SendPing()
     {
         uint ts = (uint)(Time.time * 1000);
@@ -165,9 +174,31 @@ public class NetworkManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Gửi NavMesh path waypoints lên server qua TCP.
-    /// Server sẽ di chuyển player theo đúng các waypoints này thay vì đi thẳng.
-    /// Gọi sau khi NavMesh tính xong path (agent.path.corners available).
+    /// Sends a LoginReq packet over the existing TCP connection.
+    /// Used to select a character slot after authentication without reconnecting.
+    /// </summary>
+    public void SendLoginReq(string username, string password, byte slot)
+    {
+        var loginBuf = PacketEncoder.EncodeLoginReq(username, password, slot);
+        SendTCP(loginBuf);
+        Debug.Log($"[Network] Sent LoginReq for slot {slot} over existing connection");
+    }
+
+    /// <summary>
+    /// Sends GetCharListReq — requests the server to return the 3 character slots.
+    /// Call after a successful LoginAck, before showing the CharacterPickingPanel.
+    /// </summary>
+    public void RequestCharacterList()
+    {
+        var buf = PacketEncoder.EncodeGetCharListReq();
+        SendTCP(buf);
+        Debug.Log("[Network] GetCharListReq sent");
+    }
+
+    /// <summary>
+    /// Sends NavMesh path waypoints to the server over TCP.
+    /// The server moves the player along these waypoints instead of in a straight line.
+    /// Call after NavMesh has computed a path (agent.path.corners available).
     /// </summary>
     public void SendMovePath(uint playerID, Vector3[] corners)
     {
@@ -176,12 +207,13 @@ public class NetworkManager : MonoBehaviour
         SendTCP(buf);
     }
 
-    /// <summary>Ngắt kết nối.</summary>
+    /// <summary>Disconnects from the server.</summary>
     public void Disconnect()
     {
         tcpReadThread?.Abort();
         udpReadThread?.Abort();
         tcpStream?.Close();
+        tcpStream = null;
         tcpClient?.Close();
         udpClient?.Close();
         tcpClient = null;
@@ -196,7 +228,6 @@ public class NetworkManager : MonoBehaviour
         Disconnect();
         Debug.Log($"[Network] Connecting to {serverIP}:{tcpPort}...");
 
-        // TCP connect
         tcpClient = new TcpClient();
         var ar = tcpClient.BeginConnect(serverIP, tcpPort, null, null);
         yield return new WaitUntil(() => ar.IsCompleted);
@@ -211,11 +242,9 @@ public class NetworkManager : MonoBehaviour
 
         tcpStream = tcpClient.GetStream();
 
-        // UDP setup
         udpClient = new UdpClient();
         udpClient.Connect(serverIP, udpPort);
 
-        // Bắt đầu read threads
         tcpReadThread = new Thread(TCPReadLoop) { IsBackground = true };
         tcpReadThread.Start();
 
@@ -224,7 +253,6 @@ public class NetworkManager : MonoBehaviour
 
         Debug.Log("[Network] Connected. Sending login...");
 
-        // Gửi LoginReq
         var loginBuf = PacketEncoder.EncodeLoginReq(username, password, slot);
         SendTCP(loginBuf);
     }
@@ -270,12 +298,12 @@ public class NetworkManager : MonoBehaviour
         }
         catch (System.Threading.ThreadAbortException)
         {
-            // Bình thường — xảy ra khi Unity dừng Play mode và hủy thread
+            // Normal — occurs when Unity exits Play mode and aborts the thread
         }
         catch (Exception e)
         {
-            if (tcpClient != null) // không phải do Disconnect()
-                Enqueue(() => Debug.LogError($"[Network] TCP read error: {e.Message}"));
+            if (tcpClient != null && !e.Message.Contains("Thread was being aborted") && !e.Message.Contains("aborted"))
+                Enqueue(() => Debug.LogWarning($"[Network] TCP read warning: {e.Message}"));
         }
     }
 
@@ -302,12 +330,12 @@ public class NetworkManager : MonoBehaviour
         }
         catch (System.Threading.ThreadAbortException)
         {
-            // Bình thường — xảy ra khi Unity dừng Play mode và hủy thread
+            // Normal — occurs when Unity exits Play mode and aborts the thread
         }
         catch (Exception e)
         {
-            if (udpClient != null)
-                Enqueue(() => Debug.LogError($"[Network] UDP read error: {e.Message}"));
+            if (udpClient != null && !e.Message.Contains("Thread was being aborted") && !e.Message.Contains("aborted"))
+                Enqueue(() => Debug.LogWarning($"[Network] UDP read warning: {e.Message}"));
         }
     }
 
@@ -323,17 +351,16 @@ public class NetworkManager : MonoBehaviour
                 {
                     if (loginAck.Success)
                     {
-                        LocalPlayerID  = loginAck.PlayerID;
-                        LocalJobClass  = loginAck.JobClass;
+                        LocalPlayerID = loginAck.PlayerID;
+                        LocalJobClass = loginAck.JobClass;
                         Debug.Log($"[Network] Login OK — ID={LocalPlayerID} Job={LocalJobClass} Level={loginAck.Level} Map={loginAck.MapName} Pos=({loginAck.X},{loginAck.Y})");
 
-                        // Lưu đầy đủ data từ server vào GameSession
                         if (GameSession.Instance != null)
                         {
                             GameSession.Instance.SetPlayerInfo(
                                 playerID:     loginAck.PlayerID,
                                 jobClassByte: loginAck.JobClass,
-                                username:     "",
+                                username:     loginAck.CharName,
                                 hp:           loginAck.HP,
                                 maxHP:        loginAck.MaxHP,
                                 x:            loginAck.X,
@@ -397,8 +424,22 @@ public class NetworkManager : MonoBehaviour
                 Enqueue(() => OnRespawnAck?.Invoke(resp));
                 break;
 
+            case PacketType.ProjectileSpawn:
+                var proj = PacketDecoder.DecodeProjectileSpawn(payload);
+                Enqueue(() => OnProjectileSpawn?.Invoke(proj));
+                break;
+
+            case PacketType.GetCharListAck:
+                var charList = PacketDecoder.DecodeGetCharListAck(payload);
+                Enqueue(() =>
+                {
+                    Debug.Log($"[Network] GetCharListAck received: {charList.Length} slots");
+                    OnCharacterListReceived?.Invoke(charList);
+                });
+                break;
+
             case PacketType.Pong:
-                // RTT phải tính trên main thread (Time.time không dùng được từ background thread)
+                // RTT must be calculated on the main thread (Time.time is not thread-safe)
                 Enqueue(() =>
                 {
                     LatencyMs = (Time.time - pingTimestamp) * 1000f;
@@ -443,16 +484,16 @@ public struct PlayerInfo
 [Serializable]
 public struct PlayerSnapshot
 {
-    public uint  PlayerID;
-    public float X, Y, DirX, DirY;
+    public uint   PlayerID;
+    public float  X, Y, DirX, DirY;
     public ushort HP;
-    public byte  State;
+    public byte   State;
 }
 
 [Serializable]
 public struct WorldStatePacket
 {
-    public uint            Tick;
+    public uint             Tick;
     public PlayerSnapshot[] Players;
 }
 
@@ -481,7 +522,7 @@ public struct RespawnAckPacket
 
 public struct RegisterAckData
 {
-    public bool Success;
+    public bool   Success;
     public string Message;
 }
 

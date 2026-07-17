@@ -1,78 +1,83 @@
-using NavMeshPlus.Components;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.InputSystem;
+using Freeland.Gameplay.HumanAnimation;
 
 /// <summary>
-/// LocalPlayer — click-to-move online player controller.
+/// LocalPlayer — server-authoritative controller.
 ///
-/// Di chuyển bằng NavMesh.CalculatePath + manual path-following.
-/// NavMeshAgent.Warp() không hoạt động với NavMesh+2D (XY plane) nên bị bỏ.
-/// SamplePosition + CalculatePath hoạt động tốt với cùng NavMesh data.
+/// Responsibilities (SRP):
+///   1. Capture player input (click to move, D to dash, left-click to attack).
+///   2. Send requests to the server (MovePath, DashReq, AttackReq) — server validates and executes.
+///   3. Receive WorldState from the server and synchronize position + animation state.
 ///
-/// DIP: Human states chỉ biết IHumanController, không biết LocalPlayer.
-/// SRP: LocalPlayer chỉ xử lý input + NavMesh + network sync.
+/// The client does NOT self-simulate any game logic:
+///   - Position is driven by server WorldState via smooth Lerp.
+///   - State machine transitions are driven by server State field via Human.ForceState().
+///   - Cooldowns, timers, input locks are all server-side.
+///
+/// DIP: Human state machine communicates only via IHumanController.
 /// </summary>
 public class LocalPlayer : MonoBehaviour, IHumanController
 {
     // ─── IHumanController ────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Hướng di chuyển, chuẩn hóa về [-1,1].
-    /// HumanMoveState dùng: owner.SetVelocity(MoveInput * MoveSpeed)
-    /// </summary>
-    public Vector2 MoveInput     { get; private set; }
-    public Vector2 AimDirection  { get; private set; }
-    public bool    IsDashPressed    => false;
-    public bool    IsDashPressedRaw => false;
-    public bool    IsAttackPressed  => Input.GetMouseButtonDown(0);
+    /// <summary>Always zero — local player position is driven by server, not by input velocity.</summary>
+    public Vector2 MoveInput    => Vector2.zero;
+    public Vector2 AimDirection { get; private set; }
 
     public void StopNavigation()
     {
-        ClearPath();
-        MoveInput = Vector2.zero;
+        Vector3[] stopPath = new Vector3[] { transform.position };
+        NetworkManager.Instance?.SendMovePath(playerID, stopPath);
     }
 
     // ─── Inspector ────────────────────────────────────────────────────────────
 
-    [Header("Network Sync")]
+    [Header("Server-Authoritative Sync")]
+    [Tooltip("Lerp speed toward the server position.")]
+    [SerializeField] private float lerpSpeed     = 25f;
+
+    [Tooltip("Maximum allowed deviation before snapping to server position.")]
+    [SerializeField] private float snapThreshold = 3f;
+
+    [Header("Network Sync Keep-Alive")]
+    [Tooltip("UDP packets per second to keep the server UDP endpoint bound.")]
     [SerializeField] private float sendRate      = 20f;
-    [SerializeField] private float snapThreshold = 50f;
-    [SerializeField] private float snapWarmup    = 2f;
 
     [Header("Input")]
-    [SerializeField] private int moveMouseButton = 1; // chuột phải
+    [SerializeField] private int moveMouseButton = 1; // right mouse button
 
     // ─── Runtime ─────────────────────────────────────────────────────────────
 
-    private uint    playerID;
-    private Camera  cam;
-    private Human   human;
-    private float   moveSpeed => human != null ? human.MoveSpeed : 5f;
+    private uint   playerID;
+    private Camera cam;
+    private Human  human;
 
-    // NavMesh path following
-    private NavMeshPath navPath;        // path hiện tại
-    private int         cornerIdx;      // corner đang tiến đến
-    private float       navMeshZ;       // Z của NavMesh (thường ≈ -0.08 với NavMesh+2D)
-    private bool        navReady;       // SamplePosition đã tìm thấy NavMesh?
-
-    // Target tracking
-    private Vector3 moveTarget;
-    private bool    hasTarget;
-
-    // Network
-    private Vector3 lastSentPos;
-    private float   sendTimer;
-    private float   udpLogTimer;
-    private float   aliveTimer;
-
-    // State
-    private bool isDead;
-    private bool isInitialized;
+    // NavMesh path calculation
+    private NavMeshPath navPath;
+    private float       navMeshZ;
+    private bool        navReady;
+    private bool        isInitialized;
 
     // NavMesh retry
     private float navMeshRetryTimer;
     private int   navMeshRetryCount;
     private const float RetryInterval = 0.3f;
+
+    // Server-authoritative state
+    private Vector3 _serverPosition;
+    private Vector2 _serverDirection;
+    private byte    _serverState;
+    private byte    _lastAppliedState = 255; // sentinel — forces first ForceState call
+    private uint    _lastProcessedTick;
+
+    private bool  isDead;
+    private float sendTimer;
+
+    // Dash distance scaling — mirrors server's ComputeMaxDashDistance()
+    // Updated via UpdateMoveSpeed() when server sends stats.
+    private float _moveSpeed = 10f;
 
     // ─── Init ─────────────────────────────────────────────────────────────────
 
@@ -82,28 +87,28 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         human    = GetComponent<Human>();
         cam      = Camera.main;
         navPath  = new NavMeshPath();
+        _lastProcessedTick = 0;
 
-        // Tắt NavMeshAgent nếu có — không dùng Warp/SetDestination (không tương thích NavMesh+2D)
         var agent = GetComponent<NavMeshAgent>();
         if (agent != null)
         {
             agent.enabled = false;
-            Debug.Log("[LocalPlayer] NavMeshAgent disabled — dùng CalculatePath thay thế.");
+            Debug.Log("[LocalPlayer] NavMeshAgent disabled — position driven by server.");
         }
 
-        // Inject controller
         if (human != null) human.Controller = this;
 
         var levelSystem = GetComponent<LevelSystem>();
         if (levelSystem != null)
             levelSystem.SetLevelDirect(session.Level, session.CurrentExp);
 
-        // Thử kết nối NavMesh ngay — nếu chưa sẵn sẽ retry trong Update
         Vector3 spawnPos = new Vector3(session.SpawnX, session.SpawnY, 0f);
+        _serverPosition = spawnPos;
+        transform.position = spawnPos;
+
         TryInitNavMesh(spawnPos);
     }
 
-    /// <summary>Thử tìm NavMesh tại pos. Nếu thành công → set navReady + vị trí spawn.</summary>
     private bool TryInitNavMesh(Vector3 worldPos)
     {
         if (!NavMesh.SamplePosition(worldPos, out var hit, 500f, NavMesh.AllAreas))
@@ -113,11 +118,10 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         navReady      = true;
         isInitialized = true;
 
-        // Đặt transform về 2D position (giữ Z=0 cho sprite rendering)
         transform.position = new Vector3(hit.position.x, hit.position.y, 0f);
-        moveTarget         = transform.position;
+        _serverPosition    = transform.position;
 
-        Debug.Log($"[LocalPlayer] ✅ NavMesh OK — Pos={transform.position}  navMeshZ={navMeshZ:F3}  speed={moveSpeed}");
+        Debug.Log($"[LocalPlayer] ✅ NavMesh OK — Pos={transform.position}  navMeshZ={navMeshZ:F3}");
         return true;
     }
 
@@ -141,7 +145,6 @@ public class LocalPlayer : MonoBehaviour, IHumanController
 
     private void Update()
     {
-        // ── NavMesh retry ────────────────────────────────────────────────────
         if (!isInitialized)
         {
             navMeshRetryTimer += Time.deltaTime;
@@ -149,37 +152,61 @@ public class LocalPlayer : MonoBehaviour, IHumanController
             {
                 navMeshRetryTimer = 0f;
                 navMeshRetryCount++;
-
-                if (TryInitNavMesh(transform.position))
-                {
-                    Debug.Log($"[LocalPlayer] ✅ NavMesh sẵn sau {navMeshRetryCount * RetryInterval:F1}s");
-                    return;
-                }
-
-                if (navMeshRetryCount % Mathf.RoundToInt(3f / RetryInterval) == 0)
-                    Debug.LogWarning($"[LocalPlayer] Chờ NavMesh... ({navMeshRetryCount * RetryInterval:F0}s)");
+                if (TryInitNavMesh(transform.position)) return;
             }
             return;
         }
 
         if (isDead) return;
 
-        aliveTimer += Time.deltaTime;
-
         HandleClickInput();
-        UpdatePathMovement();
+        HandleDashInput();
         UpdateAimDirection();
+        UpdatePositionSync();
         TrySendUDP();
     }
 
-    // ─── Click Input ──────────────────────────────────────────────────────────
+    // ─── Stats ────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Updates the player's move speed so dash distance scales correctly.
+    /// Call this whenever the server sends a stats update.
+    /// </summary>
+    public void UpdateMoveSpeed(float moveSpeed)
+    {
+        _moveSpeed = Mathf.Max(10f, moveSpeed); // minimum 10
+    }
+
+    /// <summary>
+    /// Computes the maximum dash path length for the given move speed.
+    /// Mirrors the server's ComputeMaxDashDistance() formula exactly:
+    ///   extraSteps = floor(max(0, speed - 10) / 5)
+    ///   maxDist    = 6.0 * (1 + extraSteps * 0.10)
+    /// </summary>
+    private float ComputeMaxDashDistance(float moveSpeed)
+    {
+        const float baseDist = 12f;
+        const float baseSpeed = 10f;
+        if (moveSpeed <= baseSpeed) return baseDist;
+        float extraSteps = Mathf.Floor((moveSpeed - baseSpeed) / 5f);
+        return baseDist * (1f + extraSteps * 0.10f);
+    }
+
+    // ─── Input Handlers ───────────────────────────────────────────────────────
+
+    /// <summary>Right-click to move: calculate NavMesh path and send waypoints to server.</summary>
     private void HandleClickInput()
     {
-        if (!Input.GetMouseButton(moveMouseButton)) return;
+        if (Mouse.current == null) return;
+
+        bool isPressed = moveMouseButton == 0
+            ? Mouse.current.leftButton.isPressed
+            : Mouse.current.rightButton.isPressed;
+        if (!isPressed) return;
+
         if (cam == null) { cam = Camera.main; return; }
 
-        Vector3 screen = Input.mousePosition;
+        Vector3 screen = Mouse.current.position.ReadValue();
         screen.z       = Mathf.Abs(cam.transform.position.z);
         Vector3 world  = cam.ScreenToWorldPoint(screen);
         world.z        = 0f;
@@ -187,137 +214,133 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         SetMoveTarget(world);
     }
 
-    private void SetMoveTarget(Vector3 worldTarget)
+    /// <summary>
+    /// D key to dash: use NavMesh to compute a valid dash path in AimDirection,
+    /// then send waypoints + total distance to the server.
+    /// Server computes dashSpeed = totalDistance / DashDuration.
+    /// </summary>
+    private void HandleDashInput()
     {
-        moveTarget = worldTarget;
-        hasTarget  = true;
+        if (Keyboard.current == null) return;
+        if (!Keyboard.current.dKey.wasPressedThisFrame) return;
+        if (!navReady) return;
 
-        if (!navReady)
+        // Dynamic max distance — mirrors server's ComputeMaxDashDistance(_moveSpeed)
+        float maxDashDistance = ComputeMaxDashDistance(_moveSpeed);
+
+        // Compute the ideal dash destination: current server position + aim dir * maxDist
+        Vector3 origin = new Vector3(_serverPosition.x, _serverPosition.y, navMeshZ);
+        Vector2 aimDir = AimDirection.sqrMagnitude > 0.001f ? AimDirection.normalized : Vector2.right;
+        Vector3 target = new Vector3(
+            _serverPosition.x + aimDir.x * maxDashDistance,
+            _serverPosition.y + aimDir.y * maxDashDistance,
+            navMeshZ);
+
+        // Sample target onto the NavMesh surface (handles map edges and concave maps)
+        if (NavMesh.SamplePosition(target, out var hit, maxDashDistance, NavMesh.AllAreas))
+            target = hit.position;
+
+        // Calculate NavMesh path
+        var dashPath = new NavMeshPath();
+        dashPath.ClearCorners();
+
+        Vector3[] waypoints;
+        float totalDistance;
+
+        if (NavMesh.CalculatePath(origin, target, NavMesh.AllAreas, dashPath) &&
+            dashPath.corners.Length > 1)
         {
-            // Simple mode — không có NavMesh
-            cornerIdx = -1;
-            return;
+            // Skip the first corner (it's the origin)
+            int wpCount = dashPath.corners.Length - 1;
+            waypoints = new Vector3[wpCount];
+            System.Array.Copy(dashPath.corners, 1, waypoints, 0, wpCount);
+
+            // Compute actual path length along NavMesh
+            totalDistance = 0f;
+            Vector3 prev = origin;
+            foreach (var wp in waypoints)
+            {
+                totalDistance += Vector3.Distance(prev, wp);
+                prev = wp;
+            }
+        }
+        else
+        {
+            // Fallback: single waypoint as close to target as NavMesh allows
+            waypoints = new Vector3[] { target };
+            totalDistance = Vector3.Distance(origin, target);
         }
 
-        // Snap target lên NavMesh surface
-        Vector3 navFrom = new Vector3(transform.position.x, transform.position.y, navMeshZ);
+        NetworkManager.Instance?.SendDash(playerID, waypoints, totalDistance);
+        Debug.Log($"[LocalPlayer] DashReq sent — waypoints={waypoints.Length} dist={totalDistance:F2} dir=({aimDir.x:F2},{aimDir.y:F2})");
+    }
+
+    private void SetMoveTarget(Vector3 worldTarget)
+    {
+        if (!navReady) return;
+
+        Vector3 navFrom = new Vector3(_serverPosition.x, _serverPosition.y, navMeshZ);
         Vector3 navTo   = worldTarget;
         navTo.z         = navMeshZ;
 
-        // Snap to nearest walkable
-        if (NavMesh.SamplePosition(navTo, out var hitTo, 5f, NavMesh.AllAreas))
+        if (NavMesh.SamplePosition(navTo, out var hitTo, 100f, NavMesh.AllAreas))
             navTo = hitTo.position;
 
         navPath.ClearCorners();
         if (NavMesh.CalculatePath(navFrom, navTo, NavMesh.AllAreas, navPath) &&
             navPath.corners.Length > 0)
         {
-            cornerIdx = 0;
+            // Trim the starting point to prevent the server from doubling back
+            Vector3[] sentCorners;
+            if (navPath.corners.Length > 1)
+            {
+                sentCorners = new Vector3[navPath.corners.Length - 1];
+                System.Array.Copy(navPath.corners, 1, sentCorners, 0, sentCorners.Length);
+            }
+            else
+            {
+                sentCorners = navPath.corners;
+            }
 
-            // Gửi path lên server (async — không block)
-            StopCoroutine("SendPathCoroutine");
-            StartCoroutine(SendPathCoroutine());
+            NetworkManager.Instance?.SendMovePath(playerID, sentCorners);
+        }
+    }
+
+    // ─── Server Sync ──────────────────────────────────────────────────────────
+
+    private void UpdatePositionSync()
+    {
+        float distance = Vector2.Distance(transform.position, _serverPosition);
+
+        if (distance > snapThreshold)
+        {
+            transform.position = _serverPosition;
         }
         else
         {
-            // CalculatePath thất bại → simple straight-line
-            cornerIdx = -1;
-            Debug.LogWarning($"[LocalPlayer] CalculatePath failed → simple mode target={worldTarget}");
+            transform.position = Vector3.Lerp(transform.position, _serverPosition, lerpSpeed * Time.deltaTime);
+        }
+
+        // Drive the client state machine from the server state
+        if (human != null)
+        {
+            // Only call ForceState when state actually changes (avoid redundant SM transitions)
+            if (_serverState != _lastAppliedState)
+            {
+                _lastAppliedState = _serverState;
+                human.ForceState(_serverState);
+            }
+
+            // Direction is always kept up-to-date from server
+            if (_serverDirection.sqrMagnitude > 0.001f)
+                human.FaceDirection(_serverDirection.x);
         }
     }
-
-    // ─── Path Movement ────────────────────────────────────────────────────────
-
-    private void UpdatePathMovement()
-    {
-        if (!hasTarget)
-        {
-            MoveInput = Vector2.zero;
-            return;
-        }
-
-        if (navReady && cornerIdx >= 0 && navPath.corners.Length > 0)
-        {
-            FollowNavPath();
-        }
-        else
-        {
-            MoveToTargetStraight();
-        }
-    }
-
-    private void FollowNavPath()
-    {
-        while (cornerIdx < navPath.corners.Length)
-        {
-            Vector3 corner  = navPath.corners[cornerIdx];
-            Vector2 c2D     = new Vector2(corner.x, corner.y);
-            Vector2 pos2D   = new Vector2(transform.position.x, transform.position.y);
-            float   dist    = Vector2.Distance(pos2D, c2D);
-
-            if (dist < 0.15f) { cornerIdx++; continue; } // đến corner này → tiếp tục
-
-            // Di chuyển về corner
-            Vector2 dir = (c2D - pos2D).normalized;
-            MoveInput   = dir;
-            transform.position += new Vector3(dir.x, dir.y, 0f) * moveSpeed * Time.deltaTime;
-            return;
-        }
-
-        // Đã đến cuối path
-        MoveInput = Vector2.zero;
-        hasTarget = false;
-        cornerIdx = -1;
-    }
-
-    private void MoveToTargetStraight()
-    {
-        float dist = Vector2.Distance(
-            new Vector2(transform.position.x, transform.position.y),
-            new Vector2(moveTarget.x, moveTarget.y));
-
-        if (dist > 0.15f)
-        {
-            Vector3 dir = (moveTarget - transform.position);
-            dir.z       = 0f;
-            dir         = dir.normalized;
-            MoveInput   = new Vector2(dir.x, dir.y);
-            transform.position += dir * moveSpeed * Time.deltaTime;
-        }
-        else
-        {
-            MoveInput = Vector2.zero;
-            hasTarget = false;
-        }
-    }
-
-    private void ClearPath()
-    {
-        navPath?.ClearCorners();
-        cornerIdx = -1;
-        hasTarget = false;
-    }
-
-    // ─── Server Path Send ─────────────────────────────────────────────────────
-
-    private System.Collections.IEnumerator SendPathCoroutine()
-    {
-        yield return null; // 1 frame delay để CalculatePath hoàn thành (đã sync nhưng yield cho consistency)
-
-        if (navPath != null && navPath.corners.Length > 0)
-        {
-            NetworkManager.Instance?.SendMovePath(playerID, navPath.corners);
-            Debug.Log($"[LocalPlayer] Sent path: {navPath.corners.Length} waypoints → " +
-                      $"({navPath.corners[^1].x:F1},{navPath.corners[^1].y:F1})");
-        }
-    }
-
-    // ─── Aim Direction ────────────────────────────────────────────────────────
 
     private void UpdateAimDirection()
     {
-        if (cam == null) return;
-        Vector3 screen = Input.mousePosition;
+        if (cam == null || Mouse.current == null) return;
+        Vector3 screen = Mouse.current.position.ReadValue();
         screen.z = Mathf.Abs(cam.transform.position.z);
         Vector3 world  = cam.ScreenToWorldPoint(screen);
         world.z = 0f;
@@ -325,84 +348,55 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         AimDirection = dir.sqrMagnitude > 0.001f ? dir.normalized : Vector2.right;
     }
 
-    // ─── UDP Send ─────────────────────────────────────────────────────────────
-
     private void TrySendUDP()
     {
         if (NetworkManager.Instance == null) return;
 
-        sendTimer   += Time.deltaTime;
-        udpLogTimer += Time.deltaTime;
+        sendTimer += Time.deltaTime;
+        if (sendTimer < 1f / sendRate) return;
+        sendTimer = 0f;
 
-        bool timeout    = sendTimer >= 1f / sendRate;
-        bool hasNewDest = hasTarget && (moveTarget - lastSentPos).sqrMagnitude > 0.01f;
-
-        if (!timeout && !hasNewDest) return;
-
-        sendTimer   = 0f;
-        lastSentPos = moveTarget;
-
-        Vector2 dest = new Vector2(moveTarget.x, moveTarget.y);
-        NetworkManager.Instance.SendMoveInput(playerID, dest, MoveInput);
-
-        if (udpLogTimer >= 5f)
-        {
-            udpLogTimer = 0f;
-            Debug.Log($"[LocalPlayer] UDP dest=({dest.x:F1},{dest.y:F1}) " +
-                      $"input=({MoveInput.x:F1},{MoveInput.y:F1}) speed={moveSpeed:F1}");
-        }
+        // Send position keep-alive so the server can bind our UDP endpoint
+        Vector2 currentPos = new Vector2(transform.position.x, transform.position.y);
+        NetworkManager.Instance.SendMoveInput(playerID, currentPos, Vector2.zero);
     }
 
-    // ─── Server Correction ────────────────────────────────────────────────────
+    // ─── Server Event Handlers ────────────────────────────────────────────────
 
     private void OnWorldState(WorldStatePacket ws)
     {
-        if (aliveTimer < snapWarmup) return;
+        if (ws.Tick <= _lastProcessedTick) return;
+        _lastProcessedTick = ws.Tick;
 
         foreach (var snap in ws.Players)
         {
             if (snap.PlayerID != playerID) continue;
 
-            Vector3 serverPos = new Vector3(snap.X, snap.Y, 0f);
-            float   drift     = Vector2.Distance(
-                new Vector2(transform.position.x, transform.position.y),
-                new Vector2(serverPos.x, serverPos.y));
-
-            if (drift > snapThreshold)
-            {
-                ApplyPosition(serverPos);
-                Debug.Log($"[LocalPlayer] ⚡ Teleport snap drift={drift:F1}m → ({serverPos.x:F1},{serverPos.y:F1})");
-            }
+            _serverPosition  = new Vector3(snap.X, snap.Y, 0f);
+            _serverDirection = new Vector2(snap.DirX, snap.DirY);
+            _serverState     = snap.State;
             break;
         }
     }
 
-    private void ApplyPosition(Vector3 pos)
-    {
-        pos.z = 0f;
-        transform.position = pos;
-        // Recalculate path từ vị trí mới nếu đang có target
-        if (hasTarget) SetMoveTarget(moveTarget);
-    }
-
-    // ─── Combat ───────────────────────────────────────────────────────────────
-
     private void OnDieEvent(DieEventPacket die)
     {
         if (die.PlayerID != playerID) return;
-        isDead    = true;
-        ClearPath();
-        MoveInput = Vector2.zero;
+        isDead = true;
+        _serverState = 4; // Dead
+        if (human != null) human.ForceState(4);
         Debug.Log($"[LocalPlayer] 💀 Died! Killer={die.KillerID}");
     }
 
     private void OnRespawnAck(RespawnAckPacket ack)
     {
         if (ack.PlayerID != playerID) return;
-        isDead     = false;
-        aliveTimer = 0f;
-        MoveInput  = Vector2.zero;
-        ApplyPosition(new Vector3(ack.X, ack.Y, 0f));
-        Debug.Log($"[LocalPlayer] 🔄 Respawn ({ack.X:F1},{ack.Y:F1}) HP={ack.HP}");
+        isDead = false;
+        _serverState      = 0; // Idle
+        _lastAppliedState = 255; // reset sentinel to force ForceState call
+        _serverPosition   = new Vector3(ack.X, ack.Y, 0f);
+        transform.position = _serverPosition;
+        if (human != null) human.ForceState(0);
+        Debug.Log($"[LocalPlayer] 🔄 Respawned at ({ack.X:F1},{ack.Y:F1}) HP={ack.HP}");
     }
 }

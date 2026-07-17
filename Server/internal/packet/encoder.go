@@ -114,6 +114,7 @@ func EncodeLoginAck(p LoginAckPacket) []byte {
 	writeFloat32(buf, p.X)
 	writeFloat32(buf, p.Y)
 	writeString(buf, p.MapName)
+	writeString(buf, p.CharName)
 	writeString(buf, p.Message)
 	return EncodeFrame(TypeLoginAck, buf.Bytes())
 }
@@ -196,6 +197,34 @@ func EncodeRegisterAck(p RegisterAckPacket) []byte {
 	return EncodeFrame(TypeRegisterAck, buf.Bytes())
 }
 
+// EncodeGetCharacterListAck đóng gói danh sách 3 slot nhân vật gửi về client.
+// Format payload: [count:uint8][slot:uint8][exists:bool][charName:str][jobClass:uint8][level:uint16] x3
+func EncodeGetCharacterListAck(p GetCharacterListAckPacket) []byte {
+	buf := &bytes.Buffer{}
+	writeUint8(buf, uint8(len(p.Characters)))
+	for _, c := range p.Characters {
+		writeUint8(buf, c.Slot)
+		writeBool(buf, c.Exists)
+		writeString(buf, c.CharName)
+		writeUint8(buf, c.JobClass)
+		writeUint16(buf, c.Level)
+	}
+	return EncodeFrame(TypeGetCharListAck, buf.Bytes())
+}
+
+func EncodeProjectileSpawn(p ProjectileSpawnPacket) []byte {
+	buf := &bytes.Buffer{}
+	writeUint32(buf, p.OwnerID)
+	writeFloat32(buf, p.X)
+	writeFloat32(buf, p.Y)
+	writeFloat32(buf, p.DirX)
+	writeFloat32(buf, p.DirY)
+	writeFloat32(buf, p.Speed)
+	writeFloat32(buf, p.Range)
+	writeUint8(buf, p.ProjType)
+	return EncodeFrame(TypeProjectileSpawn, buf.Bytes())
+}
+
 // ── Decoders ──────────────────────────────────────────────────────────────────
 
 func DecodeGuestLoginReq(payload []byte) (GuestLoginReqPacket, error) {
@@ -205,6 +234,13 @@ func DecodeGuestLoginReq(payload []byte) (GuestLoginReqPacket, error) {
 	if p.DeviceID, err = readString(r); err != nil { return p, err }
 	if p.Slot,     err = readUint8(r);  err != nil { return p, err }
 	return p, nil
+}
+
+// DecodeGetCharacterListReq giải mã request lấy danh sách nhân vật từ client.
+// Payload rỗng — AccountID được lấy từ session.AccountID (server side).
+func DecodeGetCharacterListReq(payload []byte) (GetCharacterListReqPacket, error) {
+	// Payload hiện tại trống, AccountID được lưu trên session sau khi login
+	return GetCharacterListReqPacket{}, nil
 }
 
 func DecodeLoginReq(payload []byte) (LoginReqPacket, error) {
@@ -292,6 +328,28 @@ func DecodeRespawnReq(payload []byte) (RespawnReqPacket, error) {
 	var p RespawnReqPacket
 	var err error
 	if p.PlayerID, err = readUint32(r); err != nil { return p, err }
+	return p, nil
+}
+
+func DecodeDashReq(payload []byte) (DashReqPacket, error) {
+	r := bytes.NewReader(payload)
+	var p DashReqPacket
+	var err error
+
+	if p.PlayerID, err = readUint32(r); err != nil { return p, err }
+	if p.TotalDistance, err = readFloat32(r); err != nil { return p, err }
+
+	count, err := readUint16(r)
+	if err != nil { return p, err }
+	if count > 16 { count = 16 } // safety cap
+
+	p.Waypoints = make([]WaypointVec2, 0, count)
+	for i := 0; i < int(count); i++ {
+		var x, y float32
+		if x, err = readFloat32(r); err != nil { return p, err }
+		if y, err = readFloat32(r); err != nil { return p, err }
+		p.Waypoints = append(p.Waypoints, WaypointVec2{X: x, Y: y})
+	}
 	return p, nil
 }
 

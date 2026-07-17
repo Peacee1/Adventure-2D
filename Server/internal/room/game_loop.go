@@ -75,9 +75,8 @@ func (gl *GameLoop) Stop() {
 	close(gl.stopCh)
 }
 
-// simulateMovement di chuyển tất cả player trong phòng theo NavMesh path waypoints.
-// Nếu player có waypoints (từ client NavMesh) → đi theo từng waypoint.
-// Nếu không có waypoints → fallback đi thẳng đến Destination (backward compat).
+// simulateMovement delegates physics and state transitions to each player's StateMachine.
+// The SM handles movement, dash, dash-end lag, attack freeze, and death internally.
 func (gl *GameLoop) simulateMovement() {
 	gl.room.mu.RLock()
 	players := make([]*player.Player, 0, len(gl.room.players))
@@ -87,57 +86,12 @@ func (gl *GameLoop) simulateMovement() {
 	gl.room.mu.RUnlock()
 
 	for _, p := range players {
-		// Lấy waypoint hiện tại (hoặc fallback Destination)
-		target, hasWaypoint := p.GetCurrentWaypoint()
-		if !hasWaypoint {
-			// Không có path → dừng
-			p.GetMu().Lock()
-			if p.State == player.StateMove {
-				p.State = player.StateIdle
-			}
-			p.GetMu().Unlock()
-			continue
-		}
-
 		p.GetMu().Lock()
-		pos   := p.Position
-		speed := p.Stats.MoveSpeed
-		p.GetMu().Unlock()
-
-		diff := target.Sub(pos)
-		dist := diff.Length()
-
-		if dist <= stoppingDistance {
-			// Đã đến waypoint này → advance sang waypoint tiếp theo
-			p.GetMu().Lock()
-			p.Position = target // snap đúng vào waypoint
-			p.GetMu().Unlock()
-			p.AdvanceWaypoint()
-
-			// Kiểm tra còn waypoint không
-			if !p.HasWaypoints() {
-				p.GetMu().Lock()
-				p.State = player.StateIdle
-				p.GetMu().Unlock()
-			}
-			continue
-		}
-
-		// Di chuyển về phía waypoint hiện tại
-		dir      := diff.Normalized()
-		moveStep := speed * dtSec
-
-		p.GetMu().Lock()
-		if moveStep >= dist {
-			p.Position  = target
-		} else {
-			p.Position  = pos.Add(dir.Scale(moveStep))
-		}
-		p.Direction = dir
-		p.State     = player.StateMove
+		p.Update(dtSec)
 		p.GetMu().Unlock()
 	}
 }
+
 
 // broadcastWorldState gửi snapshot tất cả player qua UDP đến từng player trong phòng.
 func (gl *GameLoop) broadcastWorldState() {

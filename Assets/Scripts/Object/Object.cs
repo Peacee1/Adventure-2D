@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
@@ -30,6 +30,13 @@ public class BaseObject : MonoBehaviour
 
     [SerializeField] protected string objectName; // Tên của object
     [SerializeField] protected int objectId;      // ID của object
+
+    [Header("UI Offsets Config")]
+    [Tooltip("Height of the name tag text above the character pivot.")]
+    [SerializeField] protected float nameYOffset = 4f;
+
+    [Tooltip("Height of the health bar above the character pivot.")]
+    [SerializeField] protected float hpBarYOffset = 5f;
 
     protected SpriteRenderer spriteRenderer;
     protected Collider2D objectCollider;
@@ -96,8 +103,68 @@ public class BaseObject : MonoBehaviour
 
         objectCollider.isTrigger = true;
 
-        nameTextComponent = GetComponentInChildren<TMP_Text>();
+        // 1. Default to "null" if name is empty or not set
+        if (string.IsNullOrEmpty(objectName))
+        {
+            objectName = "null";
+        }
+
+        // 2. Dynamically instantiate the Name Tag text above the character
+        GameObject nameTagGo = new GameObject("NameTag", typeof(RectTransform), typeof(TMPro.TextMeshPro));
+        nameTagGo.transform.SetParent(transform, false);
+        nameTagGo.transform.localPosition = new Vector3(0f, nameYOffset, 0f);
+
+        // 3. Configure the TextMeshPro name tag
+        nameTextComponent = nameTagGo.GetComponent<TMPro.TextMeshPro>();
+        nameTextComponent.fontSize = 6.75f; // Configured size
+        nameTextComponent.alignment = TextAlignmentOptions.Center;
+        nameTextComponent.color = Color.white;
+        nameTextComponent.outlineWidth = 0.2f;
+        nameTextComponent.outlineColor = Color.black;
+
+        // Load custom font from Resources
+        var fontAsset = Resources.Load<TMPro.TMP_FontAsset>("Font/antiquity-print SDF");
+        if (fontAsset != null)
+            nameTextComponent.font = fontAsset;
+        else
+            Debug.LogWarning("[BaseObject] Could not load Font/antiquity-print SDF for name tag.");
+
+        // Set sorting layer/order so name tag renders in front of character sprite
+        var textRenderer = nameTagGo.GetComponent<MeshRenderer>();
+        if (spriteRenderer != null && textRenderer != null)
+        {
+            textRenderer.sortingLayerID = spriteRenderer.sortingLayerID;
+            textRenderer.sortingOrder   = spriteRenderer.sortingOrder + 10;
+        }
+
+        // Keep name tag oriented correctly (no mirroring/flipping)
+        nameTagGo.AddComponent<NameTagController>();
+
         UpdateNameText();
+
+        // Load and instantiate the HPBarCanvas prefab from Resources
+        GameObject hpBarPrefab = Resources.Load<GameObject>("Prefab/HPBarCanvas");
+        if (hpBarPrefab != null)
+        {
+            GameObject hpBarInstance = Instantiate(hpBarPrefab, transform);
+            hpBarInstance.name = "HPBarCanvas_Instance";
+            hpBarInstance.transform.localPosition = new Vector3(0f, hpBarYOffset, 0f); // Use configurable height offset
+
+            // Inject this BaseObject into the HealthBarUI component attached to the prefab
+            HealthBarUI hpBarUI = hpBarInstance.GetComponent<HealthBarUI>();
+            if (hpBarUI != null)
+            {
+                hpBarUI.SetTarget(this);
+            }
+
+            // Prevent HP bar flipping/mirroring and lock rotation in world space
+            hpBarInstance.AddComponent<NameTagController>();
+            hpBarInstance.AddComponent<LockRotation>();
+        }
+        else
+        {
+            Debug.LogWarning("[BaseObject] Could not load Prefab/HPBarCanvas from Resources.");
+        }
 
         StartCoroutine(RegenCoroutine());
     }

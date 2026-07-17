@@ -5,15 +5,17 @@ import (
 	"log"
 	"sync"
 
+	"adventure2d-server/internal/mapdata"
 	"github.com/google/uuid"
 )
 
-// Manager quản lý tất cả các room đang active.
+// Manager manages all active rooms.
 // Thread-safe.
 type Manager struct {
 	mu        sync.RWMutex
 	rooms     map[string]*Room
-	udpSender UDPSender // inject từ UDPServer để game loops có thể broadcast
+	udpSender UDPSender       // injected from UDPServer so game loops can broadcast
+	mapMgr    *mapdata.Manager // loaded map data for spawn points and walkability
 }
 
 // SetUDPSender inject UDP sender vào manager.
@@ -25,10 +27,12 @@ func (m *Manager) SetUDPSender(s UDPSender) {
 }
 
 
-// NewManager tạo RoomManager mới.
-func NewManager() *Manager {
+// NewManager creates a new RoomManager with the given mapdata.Manager.
+// mapMgr may be nil; in that case rooms fall back to hardcoded spawn points.
+func NewManager(mapMgr *mapdata.Manager) *Manager {
 	return &Manager{
-		rooms: make(map[string]*Room),
+		rooms:  make(map[string]*Room),
+		mapMgr: mapMgr,
 	}
 }
 
@@ -92,15 +96,18 @@ func (m *Manager) RemoveIfEmpty(roomID string) {
 	}
 }
 
-// createRoom tạo và khởi động phòng mới (phải giữ lock khi gọi).
+// createRoom creates and starts a new room (must hold lock when called).
+// mapName defaults to the room ID — for Map1 the convention is roomID = "Map1".
 func (m *Manager) createRoom(id string) *Room {
-	r := New(id)
+	// Use room ID as map name convention (e.g. "Map1", "Map2")
+	mapName := id
+	r := New(id, mapName, m.mapMgr)
 	m.rooms[id] = r
-	// Inject UDP sender vào game loop ngay khi tạo
+	// Inject UDP sender into game loop immediately
 	if m.udpSender != nil {
 		r.loop.SetUDPSender(m.udpSender)
 	}
 	r.Start()
-	log.Printf("[RoomManager] Room %s created", id)
+	log.Printf("[RoomManager] Room %s created (map=%s)", id, mapName)
 	return r
 }

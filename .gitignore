@@ -41,3 +41,6 @@ Test/
 Server/adventure2d.db
 Server/adventure2d.db-wal
 Server/adventure2d.db-shm
+*.pem
+*.pem.meta
+

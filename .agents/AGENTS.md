@@ -1,39 +1,52 @@
-﻿# Project Rules — Adventure-2D
+# Project Rules — Adventure-2D
 
-## Nguyên tắc lập trình bắt buộc: SOLID
+## Mandatory Programming Principles: SOLID
 
-Mọi code được viết hoặc chỉnh sửa trong dự án này **phải** tuân thủ nghiêm ngặt 5 nguyên tắc SOLID:
+All code written or modified in this project **must** strictly follow the 5 SOLID principles:
 
-### S — Single Responsibility Principle (Nguyên tắc trách nhiệm đơn lẻ)
-- Mỗi class, script, hoặc module chỉ được có **một lý do để thay đổi**.
-- Tách biệt rõ ràng: logic game, UI, data, input handling phải nằm trong các class riêng biệt.
-- Ví dụ: `Player.cs` không được chứa đồng thời logic di chuyển, combat, inventory, và UI.
+### S — Single Responsibility Principle
+- Each class, script, or module must have **only one reason to change**.
+- Clear separation: game logic, UI, data, and input handling must reside in separate classes.
+- Example: `Player.cs` must not simultaneously contain movement logic, combat, inventory, and UI.
 
-### O — Open/Closed Principle (Nguyên tắc mở/đóng)
-- Class phải **mở để mở rộng** (thêm tính năng mới) nhưng **đóng để chỉnh sửa** (không sửa code đã chạy ổn).
-- Ưu tiên dùng **abstract class**, **interface**, và **inheritance** thay vì sửa trực tiếp class gốc.
-- Khi thêm JobClass hoặc loại Enemy mới, chỉ cần tạo class con mới, không sửa logic base.
+### O — Open/Closed Principle
+- Classes must be **open for extension** (add new features) but **closed for modification** (don't modify already-working code).
+- Prefer **abstract classes**, **interfaces**, and **inheritance** over directly modifying base classes.
+- When adding a new JobClass or Enemy type, create a new subclass only — do not modify base logic.
 
-### L — Liskov Substitution Principle (Nguyên tắc thay thế Liskov)
-- Mọi class con phải có thể **thay thế class cha** mà không làm hỏng logic của chương trình.
-- Tránh override method theo cách phá vỡ hành vi kỳ vọng của class cha.
-- Class con chỉ được **thu hẹp hoặc giữ nguyên** điều kiện tiền/hậu của phương thức cha.
+### L — Liskov Substitution Principle
+- Every subclass must be able to **substitute its parent class** without breaking program logic.
+- Avoid overriding methods in ways that violate the expected behavior of the parent class.
+- Subclasses may only **narrow or preserve** the pre/post-conditions of parent methods.
 
-### I — Interface Segregation Principle (Nguyên tắc phân tách interface)
-- Không ép một class implement interface mà nó không cần dùng.
-- Chia nhỏ interface lớn thành nhiều interface nhỏ, cụ thể theo chức năng.
-- Ví dụ: `IDamageable`, `IMovable`, `IAttackable` thay vì một `ICharacter` khổng lồ.
+### I — Interface Segregation Principle
+- Do not force a class to implement interfaces it does not need.
+- Split large interfaces into smaller, focused ones by responsibility.
+- Example: `IDamageable`, `IMovable`, `IAttackable` instead of one giant `ICharacter`.
 
-### D — Dependency Inversion Principle (Nguyên tắc đảo ngược phụ thuộc)
-- Class cấp cao **không được phụ thuộc trực tiếp** vào class cấp thấp; cả hai phải phụ thuộc vào **abstraction** (interface/abstract class).
-- Inject dependency qua constructor hoặc field thay vì khởi tạo trực tiếp bên trong class.
-- Sử dụng ScriptableObject hoặc interface làm lớp trung gian khi cần thiết trong Unity.
+### D — Dependency Inversion Principle
+- High-level classes **must not depend directly** on low-level classes; both must depend on **abstractions** (interfaces/abstract classes).
+- Inject dependencies via constructor or field rather than instantiating directly inside a class.
+- Use ScriptableObject or interfaces as intermediary layers where appropriate in Unity.
 
 ---
 
-## Quy tắc bổ sung cho Unity C#
+## Additional Rules for Unity C#
 
-- Sử dụng **ScriptableObject** cho data tĩnh (stats, item config, job class info) để tách data khỏi logic.
-- Tránh dùng **Singleton** tràn lan; chỉ dùng khi thực sự cần một instance toàn cục.
-- Mọi `MonoBehaviour` chỉ nên chứa logic Unity lifecycle (`Awake`, `Start`, `Update`); đẩy business logic vào class thuần C#.
-- Đặt tên class, method, và biến rõ ràng, phản ánh đúng trách nhiệm của chúng.
+- Use **ScriptableObject** for static data (stats, item config, job class info) to decouple data from logic.
+- Avoid overusing **Singleton**; only use it when a true global instance is required.
+- Every `MonoBehaviour` should contain only Unity lifecycle logic (`Awake`, `Start`, `Update`); push business logic into plain C# classes.
+- Name classes, methods, and variables clearly to reflect their responsibilities.
+
+---
+
+## Language Rule
+
+**All code in this project must use English only.** This applies to:
+- All code comments (both `//` inline and `/** */` doc comments)
+- All log messages (`Debug.Log`, `log.Printf`, etc.)
+- All string literals used in UI or status feedback
+- All variable names, method names, and class names
+- All documentation strings (Go doc comments, C# XML doc `<summary>`)
+
+**No Vietnamese text is allowed anywhere in source code files.** This rule applies to both the Unity C# client and the Go server.

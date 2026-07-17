@@ -7,14 +7,17 @@ import (
 	"syscall"
 
 	"adventure2d-server/internal/db"
+	"adventure2d-server/internal/mapdata"
 	"adventure2d-server/internal/network"
+	"adventure2d-server/internal/player"
 	"adventure2d-server/internal/room"
 )
 
 const (
-	tcpAddr = ":7777" // TCP port cho reliable messages
-	udpAddr = ":7778" // UDP port cho movement sync
-	dbPath  = "adventure2d.db"
+	tcpAddr    = ":7777"      // TCP port for reliable messages
+	udpAddr    = ":7778"      // UDP port for movement sync
+	dbPath     = "adventure2d.db"
+	mapDataDir = "data/maps" // directory containing *.mapdata files
 )
 
 func main() {
@@ -24,7 +27,7 @@ func main() {
 	log.Println("========================================")
 	log.Printf("TCP: %s | UDP: %s | DB: %s", tcpAddr, udpAddr, dbPath)
 
-	// Khởi tạo SQLite Database
+	// Initialize SQLite database
 	log.Println("[Main] Initializing database...")
 	database, err := db.NewDatabase(dbPath)
 	if err != nil {
@@ -37,9 +40,19 @@ func main() {
 		}
 	}()
 
-	// Khởi tạo Room Manager (dùng chung cho cả TCP và UDP)
+	// Load static map data (*.mapdata) — once at startup, then read-only
+	log.Printf("[Main] Loading map data from %q...", mapDataDir)
+	mapMgr := mapdata.NewManager()
+	if err := mapMgr.LoadAll(mapDataDir); err != nil {
+		log.Printf("[Main] WARN: map data load error: %v", err)
+		log.Println("[Main] Server will continue with fallback spawn/walkability.")
+	}
+	// Inject into player package so walkability checks use the loaded tile grids
+	player.SetMapManager(mapMgr)
+
+	// Initialize Room Manager (shared between TCP and UDP)
 	log.Println("[Main] Initializing Room Manager...")
-	roomManager := room.NewManager()
+	roomManager := room.NewManager(mapMgr)
 
 	// Khởi tạo UDP server trước để có UDPSender inject vào game loops
 	log.Println("[Main] Initializing UDP server...")

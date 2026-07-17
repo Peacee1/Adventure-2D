@@ -76,6 +76,37 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 		log.Printf("[AttackHandler] Hit: attacker=%d → target=%d rawDmg=%d remaining=%d died=%v",
 			attacker.ID, req.TargetID, rawDamage, remaining, died)
 
+		// Transition attacker to AttackState via SM
+		attacker.GetMu().Lock()
+		if attacker.SM != nil && attacker.State != player.StateDead {
+			attacker.SM.TransitionTo(player.StateAttack, attacker)
+		}
+		attacker.GetMu().Unlock()
+
+		// Broadcast projectile for ranged classes (Archer)
+		if attacker.JobClass == player.JobArcher {
+			dir := mathutil.Vector2{X: req.DirX, Y: req.DirY}.Normalized()
+			offsetX := float32(1.85)
+			if dir.X < 0 {
+				offsetX = -1.85
+			}
+			spawnX := attackerPos.X + offsetX
+			spawnY := attackerPos.Y + 1.0
+			projMsg := packet.EncodeProjectileSpawn(packet.ProjectileSpawnPacket{
+				OwnerID:  attacker.ID,
+				X:        spawnX,
+				Y:        spawnY,
+				DirX:     dir.X,
+				DirY:     dir.Y,
+				Speed:    15.0,
+				Range:    attacker.Stats.AttackRange,
+				ProjType: 0, // 0 = Arrow
+			})
+			r.BroadcastTCP(projMsg, 0)
+			log.Printf("[AttackHandler] Archer %d fired arrow at (%.1f,%.1f) dir=(%.2f,%.2f)",
+				attacker.ID, spawnX, spawnY, dir.X, dir.Y)
+		}
+
 		// Broadcast damage event
 		dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
 			AttackerID:  attacker.ID,
@@ -86,6 +117,13 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 		r.BroadcastTCP(dmgMsg, 0)
 
 		if died {
+			// Transition target to DeadState via SM
+			target.GetMu().Lock()
+			if target.SM != nil {
+				target.SM.TransitionTo(player.StateDead, target)
+			}
+			target.GetMu().Unlock()
+
 			dieMsg := packet.EncodeDieEvent(packet.DieEventPacket{
 				PlayerID: req.TargetID,
 				KillerID: attacker.ID,
@@ -123,6 +161,13 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 			r.BroadcastTCP(dmgMsg, 0)
 
 			if died {
+				// Transition target to DeadState via SM
+				target.GetMu().Lock()
+				if target.SM != nil {
+					target.SM.TransitionTo(player.StateDead, target)
+				}
+				target.GetMu().Unlock()
+
 				dieMsg := packet.EncodeDieEvent(packet.DieEventPacket{
 					PlayerID: target.ID,
 					KillerID: attacker.ID,
@@ -131,6 +176,15 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 				log.Printf("[AttackHandler] AOE: Player %d (%s) killed by %d (%s)",
 					target.ID, target.Username, attacker.ID, attacker.Username)
 			}
+		}
+
+		// Transition attacker to AttackState via SM (AOE)
+		if len(targets) > 0 {
+			attacker.GetMu().Lock()
+			if attacker.SM != nil && attacker.State != player.StateDead {
+				attacker.SM.TransitionTo(player.StateAttack, attacker)
+			}
+			attacker.GetMu().Unlock()
 		}
 	}
 }
@@ -153,17 +207,24 @@ func (h *AttackHandler) HandleRespawn(payload []byte, session *player.Session) {
 		return
 	}
 
-	spawnIdx := int(p.ID) % len(room.SpawnPoints)
-	spawn := room.SpawnPoints[spawnIdx]
-	p.Respawn(spawn)
+	spawnPos := room.FallbackSpawn(int(p.ID))
+
+	// Respawn resets HP/position, then SM transitions to Idle
+	p.GetMu().Lock()
+	p.HP       = p.Stats.MaxHP
+	p.Position = spawnPos
+	if p.SM != nil {
+		p.SM.TransitionTo(player.StateIdle, p)
+	}
+	p.GetMu().Unlock()
 
 	ackMsg := packet.EncodeRespawnAck(packet.RespawnAckPacket{
 		PlayerID: p.ID,
-		X:        spawn.X,
-		Y:        spawn.Y,
+		X:        spawnPos.X,
+		Y:        spawnPos.Y,
 		HP:       p.Stats.MaxHP,
 	})
 	session.Send(ackMsg)
 	log.Printf("[AttackHandler] Respawn OK: player %d (%s) spawned at (%.1f, %.1f) HP=%d",
-		p.ID, p.Username, spawn.X, spawn.Y, p.Stats.MaxHP)
+		p.ID, p.Username, spawnPos.X, spawnPos.Y, p.Stats.MaxHP)
 }

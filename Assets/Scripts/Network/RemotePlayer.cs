@@ -1,35 +1,43 @@
 using UnityEngine;
 
 /// <summary>
-/// RemotePlayer — đại diện visual của player khác trên màn hình local.
-/// Nhận WorldState snapshot mỗi tick và interpolate vị trí cho mượt.
+/// RemotePlayer — visual representation of other players in the room.
+/// Receives WorldState snapshots each tick and interpolates position smoothly.
 ///
-/// SRP: chỉ xử lý visual representation, không chứa game logic.
+/// SRP: handles visual representation only — no game logic.
 ///
-/// QUAN TRỌNG: RemotePlayer bypass hoàn toàn Human StateMachine.
-/// Vị trí được set trực tiếp qua Rigidbody2D.MovePosition (tránh xung đột physics).
-/// Animator được điều khiển trực tiếp từ snapshot.State — không qua IHumanController.
+/// State mapping (mirrors server player.State):
+///   0 = Idle    → speed=0, trail off
+///   1 = Move    → speed=1
+///   2 = Dash    → dash trigger, trail on
+///   3 = Attack  → attack trigger
+///   4 = Dead    → speed=0
+///   5 = DashEnd → speed=0, trail off
 /// </summary>
 public class RemotePlayer : MonoBehaviour
 {
     // ─── State ────────────────────────────────────────────────────────────────
 
-    public uint    PlayerID { get; private set; }
-    public string  Username { get; private set; }
-    public byte    JobClass { get; private set; }
+    public uint   PlayerID { get; private set; }
+    public string Username { get; private set; }
+    public byte   JobClass { get; private set; }
 
     private Vector2 targetPos;
     private Vector2 currentPos;
     private Vector2 lastDir;
+    private byte    lastState = 255; // sentinel
 
-    [SerializeField] private float lerpSpeed     = 12f;  // smooth nhưng không quá chậm
-    [SerializeField] private float snapThreshold = 10f;  // snap thẳng nếu quá xa (lag spike)
+    [SerializeField] private float lerpSpeed     = 12f;
+    [SerializeField] private float snapThreshold = 10f;
 
     // Components
     private Rigidbody2D rb;
     private Animator    animator;
+    private GameObject  dashTrailObject;
 
-    private static readonly int SpeedHash = Animator.StringToHash("speed");
+    private static readonly int SpeedHash  = Animator.StringToHash("speed");
+    private static readonly int DashHash   = Animator.StringToHash("dash");
+    private static readonly int AttackHash = Animator.StringToHash("attack");
 
     // ─── Init ─────────────────────────────────────────────────────────────────
 
@@ -45,23 +53,25 @@ public class RemotePlayer : MonoBehaviour
         rb       = GetComponent<Rigidbody2D>();
         animator = GetComponentInChildren<Animator>();
 
-        // Remote player phải là Kinematic để RemotePlayer.Update kiểm soát hoàn toàn
+        // Find dash trail the same way Human does
+        Transform squareTransform = transform.Find("Square");
+        if (squareTransform != null && squareTransform.childCount > 0)
+            dashTrailObject = squareTransform.GetChild(0).gameObject;
+        if (dashTrailObject != null) dashTrailObject.SetActive(false);
+
         if (rb != null)
         {
-            rb.bodyType        = RigidbodyType2D.Kinematic;
-            rb.linearVelocity  = Vector2.zero;
+            rb.bodyType       = RigidbodyType2D.Kinematic;
+            rb.linearVelocity = Vector2.zero;
         }
 
-        // Tắt tất cả collider vật lý — remote player KHÔNG được block local player
+        // Remote players must not physically block the local player
         foreach (var col in GetComponentsInChildren<Collider2D>())
             col.isTrigger = true;
-
-        // Tắt NavMeshObstacle nếu có — không được block NavMesh pathfinding của local player
         foreach (var obs in GetComponentsInChildren<UnityEngine.AI.NavMeshObstacle>())
             obs.enabled = false;
 
         transform.position = new Vector3(currentPos.x, currentPos.y, 0f);
-
         gameObject.name = $"Remote_{info.PlayerID}_{info.Username}";
         Debug.Log($"[RemotePlayer] Init: ID={info.PlayerID} User={info.Username} Job={info.JobClass} Pos={currentPos}");
     }
@@ -72,42 +82,77 @@ public class RemotePlayer : MonoBehaviour
     {
         float dist = Vector2.Distance(currentPos, targetPos);
 
-        // Snap ngay nếu quá xa (lag spike hoặc respawn)
         if (dist > snapThreshold)
-        {
             currentPos = targetPos;
-        }
         else
-        {
-            // Lerp mượt về targetPos
             currentPos = Vector2.Lerp(currentPos, targetPos, lerpSpeed * Time.deltaTime);
-        }
 
-        // Di chuyển Rigidbody2D (không conflict physics vì Kinematic)
         if (rb != null)
             rb.MovePosition(currentPos);
         else
             transform.position = new Vector3(currentPos.x, currentPos.y, transform.position.z);
 
-        // Flip hướng nhìn
+        // Flip facing direction from server
         if      (lastDir.x < -0.01f) transform.localScale = new Vector3(-Mathf.Abs(transform.localScale.x), transform.localScale.y, 1f);
         else if (lastDir.x >  0.01f) transform.localScale = new Vector3( Mathf.Abs(transform.localScale.x), transform.localScale.y, 1f);
     }
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
-    /// <summary>Áp dụng snapshot từ WorldState UDP packet.</summary>
+    /// <summary>Applies a WorldState snapshot — updates position, direction, and animation state.</summary>
     public void ApplySnapshot(PlayerSnapshot snap)
     {
         targetPos = new Vector2(snap.X, snap.Y);
         lastDir   = new Vector2(snap.DirX, snap.DirY);
 
-        // Điều khiển Animator trực tiếp từ State — không qua StateMachine
-        // State 1 = Move, State 0 = Idle, State 4 = Dead
-        if (animator != null)
+        // Only trigger animator transitions when state actually changes
+        if (snap.State == lastState) return;
+        lastState = snap.State;
+
+        ApplyState(snap.State);
+    }
+
+    private void ApplyState(byte state)
+    {
+        if (animator == null) return;
+
+        switch (state)
         {
-            float speedParam = (snap.State == 1) ? 1f : 0f;
-            animator.SetFloat(SpeedHash, speedParam);
+            case 0: // Idle
+                animator.SetFloat(SpeedHash, 0f);
+                SetTrail(false);
+                break;
+
+            case 1: // Move
+                animator.SetFloat(SpeedHash, 1f);
+                SetTrail(false);
+                break;
+
+            case 2: // Dash
+                animator.SetTrigger(DashHash);
+                animator.SetFloat(SpeedHash, 1f);
+                SetTrail(true);
+                break;
+
+            case 3: // Attack
+                animator.SetTrigger(AttackHash);
+                break;
+
+            case 4: // Dead
+                animator.SetFloat(SpeedHash, 0f);
+                SetTrail(false);
+                break;
+
+            case 5: // DashEnd
+                animator.SetFloat(SpeedHash, 0f);
+                SetTrail(false);
+                break;
         }
+    }
+
+    private void SetTrail(bool active)
+    {
+        if (dashTrailObject != null)
+            dashTrailObject.SetActive(active);
     }
 }

@@ -32,14 +32,20 @@ namespace Freeland.Gameplay.HumanAnimation
             animator.SetFloat(SpeedHash, speed);
         }
 
-        /// <summary>Kích hoạt trigger "dash".</summary>
-        public void TriggerDash()
+        /// <summary>
+        /// Triggers the "dash" animation at the given playback speed.
+        /// speedMultiplier = 1 + floor(max(0, moveSpeed - 10) / 5) * 0.10
+        /// Example: MoveSpeed=15 → speedMultiplier=1.1 → clip plays 10% faster.
+        /// Call ResetAnimatorSpeed() in HumanDashState.Exit() to restore speed to 1.
+        /// </summary>
+        public void TriggerDash(float speedMultiplier = 1f)
         {
             if (!IsValid)
             {
                 Debug.LogWarning("[HumanAnimatorController] TriggerDash: Animator is null!");
                 return;
             }
+            animator.speed = speedMultiplier;
             animator.SetTrigger(DashHash);
         }
 

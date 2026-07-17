@@ -12,11 +12,12 @@ import (
 type State uint8
 
 const (
-	StateIdle   State = 0
-	StateMove   State = 1
-	StateDash   State = 2
-	StateAttack State = 3
-	StateDead   State = 4
+	StateIdle     State = 0
+	StateMove     State = 1
+	StateDash     State = 2
+	StateAttack   State = 3
+	StateDead     State = 4
+	StateDashEnd  State = 5
 )
 
 // JobClass mirror với Unity JobClass enum.
@@ -40,23 +41,24 @@ type Stats struct {
 	DEFMagic    uint16
 	AttackRange float32
 	MoveSpeed   float32
+	AttackSpeed float32 // seconds per attack animation (1.0 = 1 attack/sec)
 }
 
 // DefaultStats trả về stats cơ bản theo job class.
 func DefaultStats(job JobClass) Stats {
 	switch job {
 	case JobArcher:
-		return Stats{MaxHP: 800, ATKPhysical: 80, ATKMagic: 10, DEFPhysical: 30, DEFMagic: 20, AttackRange: 15, MoveSpeed: 10}
+		return Stats{MaxHP: 800, ATKPhysical: 80, ATKMagic: 10, DEFPhysical: 30, DEFMagic: 20, AttackRange: 15, MoveSpeed: 10, AttackSpeed: 1.0}
 	case JobMage:
-		return Stats{MaxHP: 650, ATKPhysical: 15, ATKMagic: 120, DEFPhysical: 20, DEFMagic: 50, AttackRange: 8, MoveSpeed: 10}
+		return Stats{MaxHP: 650, ATKPhysical: 15, ATKMagic: 120, DEFPhysical: 20, DEFMagic: 50, AttackRange: 8, MoveSpeed: 10, AttackSpeed: 1.0}
 	case JobHealer:
-		return Stats{MaxHP: 750, ATKPhysical: 20, ATKMagic: 55, DEFPhysical: 25, DEFMagic: 60, AttackRange: 8, MoveSpeed: 10}
+		return Stats{MaxHP: 750, ATKPhysical: 20, ATKMagic: 55, DEFPhysical: 25, DEFMagic: 60, AttackRange: 8, MoveSpeed: 10, AttackSpeed: 1.0}
 	case JobAssassin:
-		return Stats{MaxHP: 700, ATKPhysical: 110, ATKMagic: 20, DEFPhysical: 25, DEFMagic: 15, AttackRange: 1.5, MoveSpeed: 10}
+		return Stats{MaxHP: 700, ATKPhysical: 110, ATKMagic: 20, DEFPhysical: 25, DEFMagic: 15, AttackRange: 1.5, MoveSpeed: 10, AttackSpeed: 0.7}
 	case JobTank:
-		return Stats{MaxHP: 1500, ATKPhysical: 50, ATKMagic: 10, DEFPhysical: 100, DEFMagic: 80, AttackRange: 2, MoveSpeed: 10}
+		return Stats{MaxHP: 1500, ATKPhysical: 50, ATKMagic: 10, DEFPhysical: 100, DEFMagic: 80, AttackRange: 2, MoveSpeed: 10, AttackSpeed: 1.5}
 	default: // Warrior
-		return Stats{MaxHP: 1100, ATKPhysical: 90, ATKMagic: 10, DEFPhysical: 60, DEFMagic: 25, AttackRange: 2, MoveSpeed: 10}
+		return Stats{MaxHP: 1100, ATKPhysical: 90, ATKMagic: 10, DEFPhysical: 60, DEFMagic: 25, AttackRange: 2, MoveSpeed: 10, AttackSpeed: 1.0}
 	}
 }
 
@@ -82,8 +84,27 @@ type Player struct {
 	// HP hiện tại
 	HP uint16
 
-	// Trạng thái animation
+	// Trạng thái animation — driven by PlayerStateMachine
 	State State
+
+	// SM is the server-side state machine for this player.
+	// Must be accessed under mu.
+	SM *PlayerStateMachine
+
+	// GameTime accumulates delta time each tick — used by states for cooldown checks.
+	GameTime float32
+
+	// LastDashTime records when the last dash started (in GameTime seconds).
+	LastDashTime float32
+
+	// DashWaypoints holds the NavMesh path for the current dash.
+	// Set by dash_handler before TransitionTo(StateDash); read once by DashState.Enter().
+	DashWaypoints     []mathutil.Vector2
+	// DashTotalDistance is the pre-computed path length sent by the client.
+	DashTotalDistance float32
+	// DashEndLagDynamic is the speed-scaled landing lag set by DashState.Enter().
+	// DashEndState reads this instead of the constant to stay in sync with the animation.
+	DashEndLagDynamic float32
 
 	// Level và EXP
 	Level int
@@ -91,6 +112,14 @@ type Player struct {
 
 	// Map cuối cùng player đứng (tên Scene Unity)
 	MapName string
+
+	// Ngày tạo nhân vật
+	CreatedAt string
+
+	// Dữ liệu dạng text — cập nhật từ DB khi login, ghi lại khi logout
+	Inventory string // Kho đồ
+	Buffs     string // Hiệu ứng buff đang hoạt động
+	Skills    string // Kỹ năng đã mở khóa
 
 	// Timestamp của MoveInput cuối cùng (để lọc out-of-order UDP)
 	LastMoveTimestamp uint32
@@ -102,10 +131,10 @@ type Player struct {
 	TCPConn net.Conn
 }
 
-// New tạo player mới với stats mặc định.
+// New tạo player mới với stats mặc định và khởi tạo StateMachine.
 func New(id uint32, username string, job JobClass, conn net.Conn) *Player {
 	stats := DefaultStats(job)
-	return &Player{
+	p := &Player{
 		ID:       id,
 		Username: username,
 		JobClass: job,
@@ -114,6 +143,21 @@ func New(id uint32, username string, job JobClass, conn net.Conn) *Player {
 		State:    StateIdle,
 		TCPConn:  conn,
 	}
+	p.SM = NewPlayerStateMachine()
+	return p
+}
+
+// Update ticks the state machine. Called by game_loop each tick with the player mutex held.
+func (p *Player) Update(dt float32) {
+	p.GameTime += dt
+	if p.SM != nil {
+		p.SM.Update(p, dt)
+	}
+}
+
+// CanDash returns true if the dash cooldown has expired.
+func (p *Player) CanDash() bool {
+	return p.GameTime-p.LastDashTime >= DashCooldown
 }
 
 // GetMu trả về mutex để game_loop có thể lock trực tiếp (batch update hiệu quả hơn).
@@ -265,6 +309,40 @@ func (p *Player) Snapshot() (id uint32, pos mathutil.Vector2, dir mathutil.Vecto
 	return p.ID, p.Position, p.Direction, p.HP, p.State
 }
 
+// SaveData chứa toàn bộ dữ liệu cần thiết để ghi vào DB khi logout.
+type SaveData struct {
+	ID          uint32
+	Position    mathutil.Vector2
+	HP          uint16
+	JobClass    JobClass
+	Stats       Stats
+	Level       int
+	Exp         int
+	MapName     string
+	Inventory   string
+	Buffs       string
+	Skills      string
+}
+
+// GetSaveData thu thập toàn bộ dữ liệu cần lưu DB (thread-safe).
+func (p *Player) GetSaveData() SaveData {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return SaveData{
+		ID:        p.ID,
+		Position:  p.Position,
+		HP:        p.HP,
+		JobClass:  p.JobClass,
+		Stats:     p.Stats,
+		Level:     p.Level,
+		Exp:       p.Exp,
+		MapName:   p.MapName,
+		Inventory: p.Inventory,
+		Buffs:     p.Buffs,
+		Skills:    p.Skills,
+	}
+}
+
 // GetUDPAddr trả về UDP address đã đăng ký (thread-safe).
 func (p *Player) GetUDPAddr() *net.UDPAddr {
 	p.mu.RLock()
@@ -299,4 +377,20 @@ func (p *Player) SendTCP(data []byte) {
 	if conn != nil {
 		conn.Write(data) //nolint
 	}
+}
+
+// StartDash requests a dash transition via the state machine (thread-safe).
+// Called by dash_handler after validating the request.
+func (p *Player) StartDash(dir mathutil.Vector2) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SM == nil {
+		return
+	}
+	// Reject if dead or in DashEnd (landing lag)
+	if p.State == StateDead || p.State == StateDashEnd {
+		return
+	}
+	p.Direction = dir
+	p.SM.TransitionTo(StateDash, p)
 }

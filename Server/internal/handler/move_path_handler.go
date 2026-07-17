@@ -4,13 +4,14 @@ import (
 	"log"
 
 	"adventure2d-server/internal/packet"
+	"adventure2d-server/internal/player"
 	"adventure2d-server/internal/room"
 	"adventure2d-server/pkg/mathutil"
 )
 
-// MovePathHandler xử lý MovePathPacket — NavMesh path waypoints từ client.
-// Khi Unity NavMesh tính xong path, client gửi toàn bộ corners lên server.
-// Server lưu vào player.Waypoints để game loop di chuyển theo đúng path.
+// MovePathHandler handles MovePathPacket — NavMesh path waypoints from the client.
+// Unity computes the NavMesh path and sends the corners to the server.
+// The server moves the player along these waypoints via the StateMachine.
 type MovePathHandler struct {
 	roomManager *room.Manager
 }
@@ -19,7 +20,7 @@ func NewMovePathHandler(rm *room.Manager) *MovePathHandler {
 	return &MovePathHandler{roomManager: rm}
 }
 
-// Handle nhận MovePathPacket qua TCP và cập nhật path cho player.
+// Handle receives MovePathPacket over TCP and updates the player's path.
 func (h *MovePathHandler) Handle(payload []byte, sess interface{}) {
 	req, err := packet.DecodeMovePathPacket(payload)
 	if err != nil {
@@ -41,13 +42,17 @@ func (h *MovePathHandler) Handle(payload []byte, sess interface{}) {
 		return
 	}
 
-	// Chuyển đổi WaypointVec2 → mathutil.Vector2
+	// Convert WaypointVec2 → mathutil.Vector2
 	waypoints := make([]mathutil.Vector2, len(req.Waypoints))
 	for i, w := range req.Waypoints {
 		waypoints[i] = mathutil.Vector2{X: w.X, Y: w.Y}
 	}
 
-	p.SetPath(waypoints)
+	// SetPathAndMove sets waypoints and transitions to MoveState via SM
+	// (only if player is Idle or already Moving — dash/attack take priority)
+	p.GetMu().Lock()
+	player.SetPathAndMove(p, waypoints)
+	p.GetMu().Unlock()
 
 	log.Printf("[MovePathHandler] Player %d path set: %d waypoints, dest=(%.1f,%.1f)",
 		req.PlayerID, len(waypoints),
