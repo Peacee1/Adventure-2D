@@ -214,6 +214,7 @@ func EncodeGetCharacterListAck(p GetCharacterListAckPacket) []byte {
 
 func EncodeProjectileSpawn(p ProjectileSpawnPacket) []byte {
 	buf := &bytes.Buffer{}
+	writeUint32(buf, p.ProjID)
 	writeUint32(buf, p.OwnerID)
 	writeFloat32(buf, p.X)
 	writeFloat32(buf, p.Y)
@@ -224,6 +225,27 @@ func EncodeProjectileSpawn(p ProjectileSpawnPacket) []byte {
 	writeUint8(buf, p.ProjType)
 	return EncodeFrame(TypeProjectileSpawn, buf.Bytes())
 }
+
+// EncodeProjectileState encodes a batch of projectile positions for one tick.
+// Format: [count uint16][ProjID uint32, X float32, Y float32] × count
+func EncodeProjectileState(p ProjectileStatePacket) []byte {
+	buf := &bytes.Buffer{}
+	writeUint16(buf, uint16(len(p.Projectiles)))
+	for _, e := range p.Projectiles {
+		writeUint32(buf, e.ProjID)
+		writeFloat32(buf, e.X)
+		writeFloat32(buf, e.Y)
+	}
+	return EncodeFrame(TypeProjectileState, buf.Bytes())
+}
+
+// EncodeProjectileDestroy encodes a projectile removal notification.
+func EncodeProjectileDestroy(p ProjectileDestroyPacket) []byte {
+	buf := &bytes.Buffer{}
+	writeUint32(buf, p.ProjID)
+	return EncodeFrame(TypeProjectileDestroy, buf.Bytes())
+}
+
 
 // ── Decoders ──────────────────────────────────────────────────────────────────
 

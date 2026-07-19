@@ -64,7 +64,9 @@ func (gl *GameLoop) Run() {
 
 		case <-ticker.C:
 			gl.tick++
-			gl.simulateMovement() // server-authoritative: di chuyển players mỗi tick
+			gl.simulateMovement()              // real players
+			gl.room.UpdateBots(dtSec)           // NPC wander bots
+			gl.room.SimulateProjectiles(dtSec)  // projectile collision
 			gl.broadcastWorldState()
 		}
 	}

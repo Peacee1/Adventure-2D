@@ -18,9 +18,11 @@ public class RemotePlayer : MonoBehaviour
 {
     // ─── State ────────────────────────────────────────────────────────────────
 
-    public uint   PlayerID { get; private set; }
-    public string Username { get; private set; }
-    public byte   JobClass { get; private set; }
+    public uint   PlayerID    { get; private set; }
+    public string Username    { get; private set; }
+    public byte   JobClass    { get; private set; }
+    public uint   CurrentHP   { get; private set; }
+    public uint   MaxHP       { get; private set; }
 
     private Vector2 targetPos;
     private Vector2 currentPos;
@@ -43,9 +45,11 @@ public class RemotePlayer : MonoBehaviour
 
     public void Initialize(PlayerInfo info)
     {
-        PlayerID = info.PlayerID;
-        Username = info.Username;
-        JobClass = info.JobClass;
+        PlayerID   = info.PlayerID;
+        Username   = info.Username;
+        JobClass   = info.JobClass;
+        CurrentHP  = info.HP;
+        MaxHP      = info.MaxHP > 0 ? info.MaxHP : info.HP;
 
         currentPos = new Vector2(info.X, info.Y);
         targetPos  = currentPos;
@@ -98,6 +102,29 @@ public class RemotePlayer : MonoBehaviour
     }
 
     // ─── Public API ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Called by GameSceneBootstrap on DamageEvent — updates HP state.
+    /// </summary>
+    public void ApplyServerDamage(uint remainingHP)
+    {
+        CurrentHP = remainingHP;
+        var baseObj = GetComponent<BaseObject>();
+        if (baseObj != null)
+            baseObj.HP = (int)remainingHP;
+        Debug.Log($"[RemotePlayer:{PlayerID}] HP updated → {remainingHP}/{MaxHP}");
+    }
+
+    /// <summary>
+    /// Called by GameSceneBootstrap on DieEvent — triggers death animation.
+    /// </summary>
+    public void ServerKill()
+    {
+        CurrentHP = 0;
+        if (animator != null)
+            animator.SetFloat(SpeedHash, 0f);
+        Debug.Log($"[RemotePlayer:{PlayerID}] Killed by server");
+    }
 
     /// <summary>Applies a WorldState snapshot — updates position, direction, and animation state.</summary>
     public void ApplySnapshot(PlayerSnapshot snap)

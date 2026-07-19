@@ -18,6 +18,10 @@ public class GameSceneBootstrap : MonoBehaviour
 
     private void Start()
     {
+        // Ensure ProjectileManager is present — handles arrow/spell spawning from server broadcasts
+        if (GetComponent<ProjectileManager>() == null)
+            gameObject.AddComponent<ProjectileManager>();
+
         // Check if NetworkManager is connected
         if (NetworkManager.Instance != null && NetworkManager.Instance.IsConnected)
         {
@@ -118,6 +122,8 @@ public class GameSceneBootstrap : MonoBehaviour
         NetworkManager.Instance.OnPlayerJoined += HandlePlayerJoined;
         NetworkManager.Instance.OnPlayerLeft   += HandlePlayerLeft;
         NetworkManager.Instance.OnWorldState   += HandleWorldState;
+        NetworkManager.Instance.OnDamageEvent  += HandleDamageEvent;
+        NetworkManager.Instance.OnDieEvent     += HandleDieEvent;
     }
 
     private void UnsubscribeNetworkEvents()
@@ -126,6 +132,46 @@ public class GameSceneBootstrap : MonoBehaviour
         NetworkManager.Instance.OnPlayerJoined -= HandlePlayerJoined;
         NetworkManager.Instance.OnPlayerLeft   -= HandlePlayerLeft;
         NetworkManager.Instance.OnWorldState   -= HandleWorldState;
+        NetworkManager.Instance.OnDamageEvent  -= HandleDamageEvent;
+        NetworkManager.Instance.OnDieEvent     -= HandleDieEvent;
+    }
+
+    // ─── Damage / Die Events ──────────────────────────────────────────────────
+
+    private void HandleDamageEvent(DamageEventPacket pkt)
+    {
+        uint localID = GameSession.Instance != null ? GameSession.Instance.PlayerID : 0;
+
+        if (pkt.TargetID == localID)
+        {
+            // Apply to local player's BaseObject HP — HP bar updates automatically
+            if (localPlayer != null)
+            {
+                var baseObj = localPlayer.GetComponent<BaseObject>();
+                if (baseObj != null)
+                    baseObj.HP = (int)pkt.RemainingHP;
+            }
+            Debug.Log($"[Bootstrap] Local player took damage — HP now {pkt.RemainingHP} (from {pkt.AttackerID})");
+        }
+        else if (remotePlayers.TryGetValue(pkt.TargetID, out var rp))
+        {
+            rp.ApplyServerDamage(pkt.RemainingHP);
+        }
+    }
+
+    private void HandleDieEvent(DieEventPacket pkt)
+    {
+        uint localID = GameSession.Instance != null ? GameSession.Instance.PlayerID : 0;
+
+        if (pkt.PlayerID == localID)
+        {
+            Debug.Log($"[Bootstrap] Local player died (killed by {pkt.KillerID})");
+            // TODO: show death screen / respawn UI
+        }
+        else if (remotePlayers.TryGetValue(pkt.PlayerID, out var rp))
+        {
+            rp.ServerKill();
+        }
     }
 
     // ─── Remote Players ───────────────────────────────────────────────────────

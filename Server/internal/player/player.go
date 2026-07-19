@@ -48,7 +48,7 @@ type Stats struct {
 func DefaultStats(job JobClass) Stats {
 	switch job {
 	case JobArcher:
-		return Stats{MaxHP: 800, ATKPhysical: 80, ATKMagic: 10, DEFPhysical: 30, DEFMagic: 20, AttackRange: 15, MoveSpeed: 10, AttackSpeed: 1.0}
+		return Stats{MaxHP: 800, ATKPhysical: 80, ATKMagic: 10, DEFPhysical: 30, DEFMagic: 20, AttackRange: 22.5, MoveSpeed: 10, AttackSpeed: 1.0}
 	case JobMage:
 		return Stats{MaxHP: 650, ATKPhysical: 15, ATKMagic: 120, DEFPhysical: 20, DEFMagic: 50, AttackRange: 8, MoveSpeed: 10, AttackSpeed: 1.0}
 	case JobHealer:

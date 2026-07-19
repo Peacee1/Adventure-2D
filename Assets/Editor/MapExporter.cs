@@ -103,54 +103,78 @@ public static class MapExporter
     // ── Section Writers ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// Writes the TILE section: a compact bitset of walkable tiles.
+    /// Writes the TILE section at WORLD-UNIT resolution.
+    ///
+    /// Because the Grid cell size is non-integer (X=4, Y=3.7), one tile does NOT
+    /// equal one world unit. This method samples every 1×1 world-unit square by
+    /// probing its center through WorldToCell, then checking HasTile.
     ///
     /// Layout:
     ///   SectionID uint8
-    ///   OriginX   int32   (tile coord of the leftmost column)
-    ///   OriginY   int32   (tile coord of the bottom row)
-    ///   Width     uint32
-    ///   Height    uint32
-    ///   Data      []byte  (row-major, 1 bit per tile; 0=not walkable, 1=walkable)
+    ///   OriginX   int32   (world-space X of the leftmost column)
+    ///   OriginY   int32   (world-space Y of the bottom row)
+    ///   Width     uint32  (world-unit columns)
+    ///   Height    uint32  (world-unit rows)
+    ///   ByteCount uint32
+    ///   Data      []byte  (row-major, 1 bit per world-unit; 1=walkable)
+    ///
+    /// The server's IsWalkable(wx,wy) floors world coords then subtracts OriginX/Y
+    /// to get column/row — this matches exactly.
     /// </summary>
     private static void WriteTileSection(BinaryWriter w, Tilemap ground)
     {
-        BoundsInt bounds = ground.cellBounds;
+        BoundsInt cellBounds = ground.cellBounds;
 
-        int originX = bounds.xMin;
-        int originY = bounds.yMin;
-        int width   = bounds.size.x;
-        int height  = bounds.size.y;
+        // Compute world-space bounding box of the entire tilemap
+        Vector3 worldMin = ground.CellToWorld(new Vector3Int(cellBounds.xMin, cellBounds.yMin, 0));
+        Vector3 worldMax = ground.CellToWorld(new Vector3Int(cellBounds.xMax, cellBounds.yMax, 0));
 
-        // Build bitset: 1 bit per tile, row-major (x inner, y outer bottom-to-top)
-        int   totalBits  = width * height;
-        int   byteCount  = (totalBits + 7) / 8;
+        int originX    = Mathf.FloorToInt(worldMin.x);
+        int originY    = Mathf.FloorToInt(worldMin.y);
+        int worldMaxX  = Mathf.CeilToInt(worldMax.x);
+        int worldMaxY  = Mathf.CeilToInt(worldMax.y);
+        int worldWidth  = worldMaxX - originX;
+        int worldHeight = worldMaxY - originY;
+
+        Debug.Log($"[MapExporter] Cell bounds: ({cellBounds.xMin},{cellBounds.yMin}) size=({cellBounds.size.x}x{cellBounds.size.y})");
+        Debug.Log($"[MapExporter] World bounds: X[{originX}..{worldMaxX}] Y[{originY}..{worldMaxY}] ({worldWidth}x{worldHeight} world units)");
+
+        // Build bitset at world-unit resolution.
+        // For each 1×1 world-unit square, sample its center to find the cell.
+        int    totalBits = worldWidth * worldHeight;
+        int    byteCount = (totalBits + 7) / 8;
         byte[] bitset    = new byte[byteCount];
 
         int bitIndex = 0;
-        for (int y = originY; y < originY + height; y++)
+        int walkableCount = 0;
+        for (int wy = originY; wy < worldMaxY; wy++)
         {
-            for (int x = originX; x < originX + width; x++)
+            for (int wx = originX; wx < worldMaxX; wx++)
             {
-                bool hasTile = ground.HasTile(new Vector3Int(x, y, 0));
-                if (hasTile)
+                // Sample center of this world unit to determine which cell it belongs to
+                Vector3    samplePos = new Vector3(wx + 0.5f, wy + 0.5f, 0f);
+                Vector3Int cell      = ground.WorldToCell(samplePos);
+
+                if (ground.HasTile(cell))
                 {
                     bitset[bitIndex / 8] |= (byte)(1 << (bitIndex % 8));
+                    walkableCount++;
                 }
                 bitIndex++;
             }
         }
 
         MapDataFormat.WriteSectionID(w, MapDataFormat.SectionTile);
-        w.Write((int)originX);
-        w.Write((int)originY);
-        w.Write((uint)width);
-        w.Write((uint)height);
-        w.Write((uint)byteCount);    // byte count so loader knows how many bytes to read
+        w.Write(originX);
+        w.Write(originY);
+        w.Write((uint)worldWidth);
+        w.Write((uint)worldHeight);
+        w.Write((uint)byteCount);
         w.Write(bitset);
 
-        Debug.Log($"[MapExporter] TILE section: origin=({originX},{originY}) size=({width}×{height}) " +
-                  $"tiles={CountTiles(ground)} bitset={byteCount} bytes");
+        Debug.Log($"[MapExporter] TILE section: origin=({originX},{originY}) " +
+                  $"size=({worldWidth}x{worldHeight} world units) " +
+                  $"walkable={walkableCount}/{totalBits} tiles={CountTiles(ground)} bytes={byteCount}");
     }
 
     /// <summary>

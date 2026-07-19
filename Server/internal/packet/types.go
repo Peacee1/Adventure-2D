@@ -198,14 +198,33 @@ type DashReqPacket struct {
 	Waypoints     []WaypointVec2 // NavMesh path; max 16 points
 }
 
+
 // ProjectileSpawnPacket: server broadcasts when a projectile (arrow, spell, etc.) is fired.
-// Client uses this to instantiate the visual projectile — server already handled damage.
+// Client uses this to instantiate the visual projectile. Position is server-driven from this point.
 type ProjectileSpawnPacket struct {
+	ProjID   uint32  // unique projectile ID — used to correlate State and Destroy packets
 	OwnerID  uint32  // player who fired the projectile
 	X, Y     float32 // spawn position
 	DirX     float32 // normalized flight direction X
 	DirY     float32 // normalized flight direction Y
-	Speed    float32 // flight speed (units/sec)
-	Range    float32 // max range before self-destruct
-	ProjType uint8   // 0 = Arrow, 1 = Spell, 2 = ... (extensible)
+	Speed    float32 // flight speed (units/sec) — for client-side prediction (optional)
+	Range    float32 // max range — kept for client interpolation reference
+	ProjType uint8   // 0 = Arrow, 1 = Spell (extensible)
+}
+
+// ProjectileEntry is one entry in a batch ProjectileStatePacket.
+type ProjectileEntry struct {
+	ProjID uint32
+	X, Y   float32
+}
+
+// ProjectileStatePacket: server sends current positions of all active projectiles each tick.
+// Sent over TCP alongside WorldState (or could be UDP — using TCP for reliability).
+type ProjectileStatePacket struct {
+	Projectiles []ProjectileEntry
+}
+
+// ProjectileDestroyPacket: server broadcasts when a projectile is removed (hit a target or out-of-range).
+type ProjectileDestroyPacket struct {
+	ProjID uint32
 }

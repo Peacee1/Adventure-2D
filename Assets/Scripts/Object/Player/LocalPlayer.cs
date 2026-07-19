@@ -160,6 +160,7 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         if (isDead) return;
 
         HandleClickInput();
+        HandleAttackInput();
         HandleDashInput();
         UpdateAimDirection();
         UpdatePositionSync();
@@ -273,6 +274,32 @@ public class LocalPlayer : MonoBehaviour, IHumanController
 
         NetworkManager.Instance?.SendDash(playerID, waypoints, totalDistance);
         Debug.Log($"[LocalPlayer] DashReq sent — waypoints={waypoints.Length} dist={totalDistance:F2} dir=({aimDir.x:F2},{aimDir.y:F2})");
+    }
+
+    /// <summary>
+    /// Left-click to attack: sends AttackReq(targetID=0, AimDirection) to server.
+    /// Server validates cooldown and state; broadcasts ProjectileSpawnPacket to all clients.
+    /// Blocked client-side when server state is Attack/Dash/DashEnd/Dead to reduce redundant packets.
+    /// </summary>
+    private void HandleAttackInput()
+    {
+        if (Mouse.current == null) return;
+
+        // Debug: log any left-button press detection
+        if (Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            Debug.Log($"[LocalPlayer] LEFT CLICK detected — _serverState={_serverState} playerID={playerID}");
+
+            // Byte values match server State constants: 2=Dash, 3=Attack, 4=DashEnd, 5=Dead
+            if (_serverState == 2 || _serverState == 3 || _serverState == 4 || _serverState == 5)
+            {
+                Debug.Log($"[LocalPlayer] AttackReq BLOCKED by state={_serverState}");
+                return;
+            }
+
+            NetworkManager.Instance?.SendAttack(playerID, 0, AimDirection);
+            Debug.Log($"[LocalPlayer] AttackReq sent — dir=({AimDirection.x:F2},{AimDirection.y:F2})");
+        }
     }
 
     private void SetMoveTarget(Vector3 worldTarget)

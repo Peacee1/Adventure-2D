@@ -349,6 +349,7 @@ public static class PacketDecoder
         using var r = new BinaryReader(new MemoryStream(payload));
         return new ProjectileSpawnPacket
         {
+            ProjID   = r.ReadUInt32(),
             OwnerID  = r.ReadUInt32(),
             X        = r.ReadSingle(),
             Y        = r.ReadSingle(),
@@ -358,6 +359,24 @@ public static class PacketDecoder
             Range    = r.ReadSingle(),
             ProjType = r.ReadByte(),
         };
+    }
+
+    /// <summary>Decode a batch ProjectileState packet: [count uint16][ProjID,X,Y] × count.</summary>
+    public static ProjectileStatePacket DecodeProjectileState(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        ushort count = r.ReadUInt16();
+        var entries  = new ProjectileStateEntry[count];
+        for (int i = 0; i < count; i++)
+            entries[i] = new ProjectileStateEntry { ProjID = r.ReadUInt32(), X = r.ReadSingle(), Y = r.ReadSingle() };
+        return new ProjectileStatePacket { Projectiles = entries };
+    }
+
+    /// <summary>Decode a ProjectileDestroy packet: [ProjID uint32].</summary>
+    public static ProjectileDestroyPacket DecodeProjectileDestroy(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new ProjectileDestroyPacket { ProjID = r.ReadUInt32() };
     }
 
     // ── Read helpers ──────────────────────────────────────────────────────────

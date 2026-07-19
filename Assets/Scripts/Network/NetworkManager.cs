@@ -22,7 +22,7 @@ public class NetworkManager : MonoBehaviour
     // ─── Config ───────────────────────────────────────────────────────────────
 
     [Header("Server")]
-    private string serverIP = "54.169.108.73";
+    private string serverIP = "47.129.183.64";
     private int    tcpPort  = 7777;
     private int    udpPort  = 7778;
 
@@ -42,6 +42,8 @@ public class NetworkManager : MonoBehaviour
     public event Action<DieEventPacket>           OnDieEvent;
     public event Action<RespawnAckPacket>         OnRespawnAck;
     public event Action<ProjectileSpawnPacket>    OnProjectileSpawn;
+    public event Action<ProjectileStatePacket>    OnProjectileState;
+    public event Action<ProjectileDestroyPacket>  OnProjectileDestroy;
     public event Action<uint>                     OnPong;
     /// <summary>Fired when the server returns the 3-slot character list in response to GetCharListReq.</summary>
     public event Action<CharacterData[]>          OnCharacterListReceived;
@@ -427,6 +429,16 @@ public class NetworkManager : MonoBehaviour
             case PacketType.ProjectileSpawn:
                 var proj = PacketDecoder.DecodeProjectileSpawn(payload);
                 Enqueue(() => OnProjectileSpawn?.Invoke(proj));
+                break;
+
+            case PacketType.ProjectileState:
+                var projState = PacketDecoder.DecodeProjectileState(payload);
+                Enqueue(() => OnProjectileState?.Invoke(projState));
+                break;
+
+            case PacketType.ProjectileDestroy:
+                var projDestroy = PacketDecoder.DecodeProjectileDestroy(payload);
+                Enqueue(() => OnProjectileDestroy?.Invoke(projDestroy));
                 break;
 
             case PacketType.GetCharListAck:

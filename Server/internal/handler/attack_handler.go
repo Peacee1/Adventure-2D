@@ -2,6 +2,7 @@ package handler
 
 import (
 	"log"
+	"time"
 
 	"adventure2d-server/internal/packet"
 	"adventure2d-server/internal/player"
@@ -29,7 +30,7 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 	attacker := attackerSession.Player
 
 	// BUG FIX: dùng Snapshot() để đọc HP thread-safe thay vì trực tiếp attacker.HP
-	_, attackerPos, attackDir, attackerHP, attackerState := attacker.Snapshot()
+	_, attackerPos, _, attackerHP, attackerState := attacker.Snapshot()
 
 	if attackerState == player.StateDead || attackerHP == 0 {
 		log.Printf("[AttackHandler] Player %d (%s) is dead — attack ignored", attacker.ID, attacker.Username)
@@ -98,7 +99,7 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 				Y:        spawnY,
 				DirX:     dir.X,
 				DirY:     dir.Y,
-				Speed:    15.0,
+				Speed:    45.0,
 				Range:    attacker.Stats.AttackRange,
 				ProjType: 0, // 0 = Arrow
 			})
@@ -134,57 +135,106 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 		}
 
 	} else {
-		// AOE / melee hitbox: tìm tất cả player trong AttackRange
-		if attackDir.LengthSq() < 0.01 {
-			attackDir = mathutil.Vector2{X: 1, Y: 0}
+		// AOE / no-target: Archer fires a projectile in AimDirection.
+		// For melee classes this would be a hitbox sweep.
+		dir := mathutil.Vector2{X: req.DirX, Y: req.DirY}
+		if dir.LengthSq() < 0.01 {
+			dir = mathutil.Vector2{X: 1, Y: 0}
 		}
-		hitCenter := mathutil.Vector2{
-			X: attackerPos.X + attackDir.X*0.6,
-			Y: attackerPos.Y + attackDir.Y*0.6,
+		dir = dir.Normalized()
+
+		// Transition attacker to AttackState first (locks movement for animation duration)
+		attacker.GetMu().Lock()
+		if attacker.SM != nil && attacker.State != player.StateDead {
+			attacker.SM.TransitionTo(player.StateAttack, attacker)
 		}
+		attacker.GetMu().Unlock()
 
-		targets := r.PlayersInRange(hitCenter, attacker.Stats.AttackRange, attacker.ID)
-		log.Printf("[AttackHandler] AOE attack by player %d: center=(%.2f,%.2f) range=%.2f targets=%d",
-			attacker.ID, hitCenter.X, hitCenter.Y, attacker.Stats.AttackRange, len(targets))
+		// Archer: broadcast projectile visual — server applies no damage here
+		// (AOE hit was removed; Archer is ranged single-target via projectile travel)
+		if attacker.JobClass == player.JobArcher {
+			offsetX := float32(1.85)
+			if dir.X < 0 {
+				offsetX = -1.85
+			}
+			spawnX    := attackerPos.X + offsetX
+			spawnY    := attackerPos.Y + 1.0
+			windupSec := attacker.Stats.AttackSpeed * 0.6 // fire at 60% of animation cycle (e.g. 1.0s × 0.6 = 0.6s)
 
-		for _, target := range targets {
-			remaining, died := target.ApplyDamage(rawDamage)
-			log.Printf("[AttackHandler] AOE Hit: attacker=%d → target=%d rawDmg=%d remaining=%d died=%v",
-				attacker.ID, target.ID, rawDamage, remaining, died)
+			// Capture locals for the goroutine closure
+			attackerID := attacker.ID
+			damage     := uint16(rawDamage)
+			attackRange := attacker.Stats.AttackRange
 
-			dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
-				AttackerID:  attacker.ID,
-				TargetID:    target.ID,
-				Damage:      uint32(rawDamage),
-				RemainingHP: remaining,
-			})
-			r.BroadcastTCP(dmgMsg, 0)
+			go func() {
+				// Wait for the windup portion of the attack animation
+				time.Sleep(time.Duration(windupSec * float32(time.Second)))
 
-			if died {
-				// Transition target to DeadState via SM
-				target.GetMu().Lock()
-				if target.SM != nil {
-					target.SM.TransitionTo(player.StateDead, target)
+				// Register server-side projectile to get its authoritative ID
+				proj := &room.Projectile{
+					OwnerID:   attackerID,
+					Position:  mathutil.Vector2{X: spawnX, Y: spawnY},
+					Direction: dir,
+					Speed:     45.0,
+					MaxRange:  attackRange,
+					Damage:    damage,
 				}
-				target.GetMu().Unlock()
+				r.AddProjectile(proj)
 
-				dieMsg := packet.EncodeDieEvent(packet.DieEventPacket{
-					PlayerID: target.ID,
-					KillerID: attacker.ID,
+				projMsg := packet.EncodeProjectileSpawn(packet.ProjectileSpawnPacket{
+					ProjID:   proj.ID,
+					OwnerID:  attackerID,
+					X:        spawnX,
+					Y:        spawnY,
+					DirX:     dir.X,
+					DirY:     dir.Y,
+					Speed:    45.0,
+					Range:    attackRange,
+					ProjType: 0,
 				})
-				r.BroadcastTCP(dieMsg, 0)
-				log.Printf("[AttackHandler] AOE: Player %d (%s) killed by %d (%s)",
-					target.ID, target.Username, attacker.ID, attacker.Username)
+				r.BroadcastTCP(projMsg, 0)
+				log.Printf("[AttackHandler] Archer %d fired arrow ID=%d after %.2fs windup at (%.1f,%.1f) dir=(%.2f,%.2f) dmg=%d",
+					attackerID, proj.ID, windupSec, spawnX, spawnY, dir.X, dir.Y, damage)
+			}()
+		} else {
+			// Melee AOE: find players in range and apply damage
+			hitCenter := mathutil.Vector2{
+				X: attackerPos.X + dir.X*0.6,
+				Y: attackerPos.Y + dir.Y*0.6,
 			}
-		}
+			targets := r.PlayersInRange(hitCenter, attacker.Stats.AttackRange, attacker.ID)
+			log.Printf("[AttackHandler] Melee AOE by player %d: center=(%.2f,%.2f) range=%.2f targets=%d",
+				attacker.ID, hitCenter.X, hitCenter.Y, attacker.Stats.AttackRange, len(targets))
 
-		// Transition attacker to AttackState via SM (AOE)
-		if len(targets) > 0 {
-			attacker.GetMu().Lock()
-			if attacker.SM != nil && attacker.State != player.StateDead {
-				attacker.SM.TransitionTo(player.StateAttack, attacker)
+			for _, target := range targets {
+				remaining, died := target.ApplyDamage(rawDamage)
+				log.Printf("[AttackHandler] AOE Hit: attacker=%d → target=%d dmg=%d remaining=%d died=%v",
+					attacker.ID, target.ID, rawDamage, remaining, died)
+
+				dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
+					AttackerID:  attacker.ID,
+					TargetID:    target.ID,
+					Damage:      uint32(rawDamage),
+					RemainingHP: remaining,
+				})
+				r.BroadcastTCP(dmgMsg, 0)
+
+				if died {
+					target.GetMu().Lock()
+					if target.SM != nil {
+						target.SM.TransitionTo(player.StateDead, target)
+					}
+					target.GetMu().Unlock()
+
+					dieMsg := packet.EncodeDieEvent(packet.DieEventPacket{
+						PlayerID: target.ID,
+						KillerID: attacker.ID,
+					})
+					r.BroadcastTCP(dieMsg, 0)
+					log.Printf("[AttackHandler] AOE: Player %d (%s) killed by %d (%s)",
+						target.ID, target.Username, attacker.ID, attacker.Username)
+				}
 			}
-			attacker.GetMu().Unlock()
 		}
 	}
 }

@@ -30,7 +30,9 @@ public enum PacketType : ushort
     DieEvent         = 0x0032,
     RespawnReq       = 0x0033,
     RespawnAck       = 0x0034,
-    ProjectileSpawn  = 0x0035, // S→C: server broadcasts projectile spawn
+    ProjectileSpawn   = 0x0035, // S→C: projectile spawned
+    ProjectileState   = 0x0036, // S→C: batch position update per tick
+    ProjectileDestroy = 0x0037, // S→C: projectile removed (hit or out-of-range)
 
     // System
     Ping = 0xFF00,
