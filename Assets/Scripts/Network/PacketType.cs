@@ -33,6 +33,8 @@ public enum PacketType : ushort
     ProjectileSpawn   = 0x0035, // S→C: projectile spawned
     ProjectileState   = 0x0036, // S→C: batch position update per tick
     ProjectileDestroy = 0x0037, // S→C: projectile removed (hit or out-of-range)
+    HitboxConfigReq   = 0x003e, // C→S: request hitbox config
+    HitboxConfigAck   = 0x003f, // S→C: receive hitbox config
 
     // System
     Ping = 0xFF00,

@@ -141,6 +141,11 @@ public static class PacketEncoder
         return MakeFrame(PacketType.Ping, ms.ToArray());
     }
 
+    public static byte[] EncodeHitboxConfigReq()
+    {
+        return MakeFrame(PacketType.HitboxConfigReq, new byte[0]);
+    }
+
     // ── Write helpers ─────────────────────────────────────────────────────────
 
     private static void WriteUint8(MemoryStream ms, byte v)     => ms.WriteByte(v);
@@ -399,6 +404,26 @@ public static class PacketDecoder
             HP       = r.ReadUInt16(),
             MaxHP    = r.ReadUInt16(),
             JobClass = r.ReadByte(),
+        };
+    }
+
+    public struct HitboxConfigPacket
+    {
+        public byte Shape; // 0 = Circle, 1 = Box
+        public float Radius;
+        public float Width;
+        public float Height;
+    }
+
+    public static HitboxConfigPacket DecodeHitboxConfig(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new HitboxConfigPacket
+        {
+            Shape = r.ReadByte(),
+            Radius = r.ReadSingle(),
+            Width = r.ReadSingle(),
+            Height = r.ReadSingle(),
         };
     }
 }

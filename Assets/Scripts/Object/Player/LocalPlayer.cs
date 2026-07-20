@@ -107,7 +107,65 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         transform.position = spawnPos;
 
         TryInitNavMesh(spawnPos);
+        CreateHitboxRenderer();
     }
+
+    private void CreateHitboxRenderer()
+    {
+        GameObject child = new GameObject("ServerHitboxVisualizer");
+        child.transform.SetParent(transform, false);
+        hitboxRenderer = child.AddComponent<LineRenderer>();
+        hitboxRenderer.widthMultiplier = 0.05f;
+        hitboxRenderer.useWorldSpace = false;
+        hitboxRenderer.loop = true;
+        
+        Shader spriteShader = Shader.Find("Sprites/Default");
+        if (spriteShader != null)
+        {
+            hitboxRenderer.material = new Material(spriteShader);
+        }
+        hitboxRenderer.startColor = Color.red;
+        hitboxRenderer.endColor = Color.red;
+
+        UpdateHitboxGeometry();
+        hitboxRenderer.gameObject.SetActive(false); // Hidden by default, shown on Tab hold
+    }
+
+    private void UpdateHitboxGeometry()
+    {
+        if (hitboxRenderer == null) return;
+        
+        byte shape = NetworkManager.ServerHitboxShape;
+        if (shape == 0) // Circle
+        {
+            int segments = 36;
+            hitboxRenderer.positionCount = segments;
+            Vector3[] points = new Vector3[segments];
+            float radius = NetworkManager.ServerHitboxRadius;
+            for (int i = 0; i < segments; i++)
+            {
+                float theta = (2f * Mathf.PI / segments) * i;
+                points[i] = new Vector3(Mathf.Cos(theta) * radius, Mathf.Sin(theta) * radius, 0f);
+            }
+            hitboxRenderer.SetPositions(points);
+        }
+        else // Box
+        {
+            hitboxRenderer.positionCount = 4;
+            float w = NetworkManager.ServerHitboxWidth / 2f;
+            float h = NetworkManager.ServerHitboxHeight / 2f;
+            Vector3[] points = new Vector3[]
+            {
+                new Vector3(-w, -h, 0f),
+                new Vector3(w, -h, 0f),
+                new Vector3(w, h, 0f),
+                new Vector3(-w, h, 0f)
+            };
+            hitboxRenderer.SetPositions(points);
+        }
+    }
+
+    private LineRenderer hitboxRenderer;
 
     private bool TryInitNavMesh(Vector3 worldPos)
     {
@@ -133,6 +191,7 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         NetworkManager.Instance.OnWorldState += OnWorldState;
         NetworkManager.Instance.OnDieEvent   += OnDieEvent;
         NetworkManager.Instance.OnRespawnAck += OnRespawnAck;
+        NetworkManager.Instance.OnHitboxConfigReceived += HandleHitboxConfigReceived;
     }
 
     private void OnDisable()
@@ -141,6 +200,12 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         NetworkManager.Instance.OnWorldState -= OnWorldState;
         NetworkManager.Instance.OnDieEvent   -= OnDieEvent;
         NetworkManager.Instance.OnRespawnAck -= OnRespawnAck;
+        NetworkManager.Instance.OnHitboxConfigReceived -= HandleHitboxConfigReceived;
+    }
+
+    private void HandleHitboxConfigReceived(PacketDecoder.HitboxConfigPacket pkt)
+    {
+        UpdateHitboxGeometry();
     }
 
     private void Update()
@@ -165,6 +230,16 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         UpdateAimDirection();
         UpdatePositionSync();
         TrySendUDP();
+        UpdateHitboxVisibility();
+    }
+
+    private void UpdateHitboxVisibility()
+    {
+        bool showHitbox = Keyboard.current != null && Keyboard.current.tabKey.isPressed;
+        if (hitboxRenderer != null && hitboxRenderer.gameObject.activeSelf != showHitbox)
+        {
+            hitboxRenderer.gameObject.SetActive(showHitbox);
+        }
     }
 
     // ─── Stats ────────────────────────────────────────────────────────────────
@@ -425,5 +500,16 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         transform.position = _serverPosition;
         if (human != null) human.ForceState(0);
         Debug.Log($"[LocalPlayer] 🔄 Respawned at ({ack.X:F1},{ack.Y:F1}) HP={ack.HP}");
+    }
+
+    private void OnDrawGizmos()
+    {
+        // Draw the server-side hitbox radius (2.5 units) around the server position
+        Gizmos.color = Color.cyan;
+        Gizmos.DrawWireSphere(_serverPosition, 2.5f);
+
+        // Draw a small solid sphere at the exact server position
+        Gizmos.color = Color.blue;
+        Gizmos.DrawSphere(_serverPosition, 0.2f);
     }
 }

@@ -19,6 +19,11 @@ public class NetworkManager : MonoBehaviour
 {
     public static NetworkManager Instance { get; private set; }
 
+    public static byte  ServerHitboxShape  { get; private set; } = 0; // 0 = Circle
+    public static float ServerHitboxRadius { get; private set; } = 2.5f;
+    public static float ServerHitboxWidth  { get; private set; } = 0f;
+    public static float ServerHitboxHeight { get; private set; } = 0f;
+
     // ─── Config ───────────────────────────────────────────────────────────────
 
     [Header("Server")]
@@ -47,6 +52,7 @@ public class NetworkManager : MonoBehaviour
     public event Action<uint>                     OnPong;
     /// <summary>Fired when the server returns the 3-slot character list in response to GetCharListReq.</summary>
     public event Action<CharacterData[]>          OnCharacterListReceived;
+    public event Action<PacketDecoder.HitboxConfigPacket> OnHitboxConfigReceived;
 
     // ─── State ────────────────────────────────────────────────────────────────
 
@@ -197,6 +203,13 @@ public class NetworkManager : MonoBehaviour
         Debug.Log("[Network] GetCharListReq sent");
     }
 
+    public void RequestHitboxConfig()
+    {
+        var buf = PacketEncoder.EncodeHitboxConfigReq();
+        SendTCP(buf);
+        Debug.Log("[Network] HitboxConfigReq sent");
+    }
+
     /// <summary>
     /// Sends NavMesh path waypoints to the server over TCP.
     /// The server moves the player along these waypoints instead of in a straight line.
@@ -257,6 +270,7 @@ public class NetworkManager : MonoBehaviour
 
         var loginBuf = PacketEncoder.EncodeLoginReq(username, password, slot);
         SendTCP(loginBuf);
+        RequestHitboxConfig();
     }
 
     private IEnumerator RegisterRoutine(string username, string password)
@@ -456,6 +470,19 @@ public class NetworkManager : MonoBehaviour
                 {
                     LatencyMs = (Time.time - pingTimestamp) * 1000f;
                     OnPong?.Invoke((uint)LatencyMs);
+                });
+                break;
+
+            case PacketType.HitboxConfigAck:
+                var hbConfig = PacketDecoder.DecodeHitboxConfig(payload);
+                Enqueue(() =>
+                {
+                    ServerHitboxShape = hbConfig.Shape;
+                    ServerHitboxRadius = hbConfig.Radius;
+                    ServerHitboxWidth = hbConfig.Width;
+                    ServerHitboxHeight = hbConfig.Height;
+                    Debug.Log($"[Network] HitboxConfigAck received: shape={hbConfig.Shape} radius={hbConfig.Radius}");
+                    OnHitboxConfigReceived?.Invoke(hbConfig);
                 });
                 break;
         }

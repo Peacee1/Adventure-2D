@@ -38,6 +38,8 @@ const (
 	TypeProjectileSpawn   PacketType = 0x0035 // S→C  Broadcast projectile spawn
 	TypeProjectileState   PacketType = 0x0036 // S→C  Batch projectile positions per tick (TCP)
 	TypeProjectileDestroy PacketType = 0x0037 // S→C  Projectile removed (hit or out-of-range)
+	TypeHitboxConfigReq   PacketType = 0x003e // C→S  Request hitbox shape and size
+	TypeHitboxConfigAck   PacketType = 0x003f // S→C  Response hitbox config
 
 	// ── System ────────────────────────────────────────────────────────────────
 	TypePing PacketType = 0xFF00 // C↔S  Ping/Pong

@@ -386,3 +386,12 @@ func writePlayerInfo(buf *bytes.Buffer, p PlayerInfo) {
 	writeUint16(buf, p.MaxHP)
 	writeUint8(buf, p.JobClass)
 }
+
+func EncodeHitboxConfigAck(p HitboxConfigAckPacket) []byte {
+	buf := &bytes.Buffer{}
+	writeUint8(buf, p.Shape)
+	writeFloat32(buf, p.Radius)
+	writeFloat32(buf, p.Width)
+	writeFloat32(buf, p.Height)
+	return EncodeFrame(TypeHitboxConfigAck, buf.Bytes())
+}

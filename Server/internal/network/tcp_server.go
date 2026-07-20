@@ -124,6 +124,16 @@ func (s *TCPServer) dispatch(pTypeRaw uint16, payload []byte, sess *player.Sessi
 			log.Printf("[TCP] Ping decode error from player %d: %v", sess.Player.ID, err)
 		}
 
+	case packet.TypeHitboxConfigReq:
+		ack := packet.HitboxConfigAckPacket{
+			Shape:  1, // Box
+			Radius: 0.0,
+			Width:  float32(room.HitboxWidth),
+			Height: float32(room.HitboxHeight),
+		}
+		sess.Send(packet.EncodeHitboxConfigAck(ack))
+		log.Printf("[TCP] Sent hitbox config to player %d (shape=Box, size=%.2fx%.2f)", sess.Player.ID, room.HitboxWidth, room.HitboxHeight)
+
 	default:
 		log.Printf("[TCP] Unknown packet type=0x%04X from player %d (%s) — ignoring",
 			pTypeRaw, sess.Player.ID, sess.Player.Username)

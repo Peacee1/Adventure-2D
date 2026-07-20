@@ -228,3 +228,11 @@ type ProjectileStatePacket struct {
 type ProjectileDestroyPacket struct {
 	ProjID uint32
 }
+
+// HitboxConfigAckPacket: server response containing hitbox shape and dimensions.
+type HitboxConfigAckPacket struct {
+	Shape  uint8   // 0 = Circle, 1 = Box
+	Radius float32 // for circle
+	Width  float32 // for box
+	Height float32 // for box
+}

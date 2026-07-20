@@ -8,10 +8,13 @@ import (
 	"adventure2d-server/pkg/mathutil"
 )
 
-// HitRadius is the collision radius for each player's hitbox (server-side).
-// A projectile is considered a hit when it comes within this distance of a player's center.
-// Map cell size is X=4, Y=3.7 world units — 2.5 gives a natural hitbox matching the sprite.
-const HitRadius = float32(2.5)
+// HitboxWidth and HitboxHeight define the collision box dimensions for each player's hitbox (server-side).
+const (
+	HitboxWidth      = float32(2.5)
+	HitboxHeight     = float32(5.75)
+	ProjHitboxWidth  = float32(3.6)
+	ProjHitboxHeight = float32(0.6)
+)
 
 // projectileIDCounter is a monotonically increasing counter for unique projectile IDs.
 var projectileIDCounter uint32
@@ -95,10 +98,19 @@ func (pp *ProjectilePool) Update(dt float32, players playerSnapshot) TickResult 
 			if snap.ID == proj.OwnerID {
 				continue
 			}
-			dist := proj.Position.Distance(snap.Position)
-			log.Printf("[Projectile:%d] check vs player=%d projPos=(%.2f,%.2f) playerPos=(%.2f,%.2f) dist=%.2f radius=%.2f",
-				proj.ID, snap.ID, proj.Position.X, proj.Position.Y, snap.Position.X, snap.Position.Y, dist, HitRadius)
-			if dist <= HitRadius {
+			dx := proj.Position.X - snap.Position.X
+			dy := proj.Position.Y - snap.Position.Y
+			if dx < 0 {
+				dx = -dx
+			}
+			if dy < 0 {
+				dy = -dy
+			}
+			halfW := (HitboxWidth + ProjHitboxWidth) / 2.0
+			halfH := (HitboxHeight + ProjHitboxHeight) / 2.0
+			log.Printf("[Projectile:%d] check vs player=%d projPos=(%.2f,%.2f) playerPos=(%.2f,%.2f) dx=%.2f dy=%.2f limits=(%.2f,%.2f)",
+				proj.ID, snap.ID, proj.Position.X, proj.Position.Y, snap.Position.X, snap.Position.Y, dx, dy, halfW, halfH)
+			if dx <= halfW && dy <= halfH {
 				remaining, died := snap.ApplyDamage(proj.Damage)
 				result.Hits = append(result.Hits, HitEvent{
 					AttackerID:  proj.OwnerID,
