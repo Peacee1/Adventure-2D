@@ -133,10 +133,19 @@ type PlayerSnapshot struct {
 	State    uint8 // 0=Idle 1=Move 2=Dash 3=Attack 4=Dead
 }
 
+// MonsterSnapshot: state of one monster at one tick.
+type MonsterSnapshot struct {
+	ID    uint32
+	X, Y  float32
+	HP    uint16
+	State uint8 // 0=Idle 1=Wander 5=Dead
+}
+
 // WorldStatePacket: server broadcasts over UDP every tick.
 type WorldStatePacket struct {
-	Tick    uint32
-	Players []PlayerSnapshot
+	Tick     uint32
+	Players  []PlayerSnapshot
+	Monsters []MonsterSnapshot // active monsters in the room
 }
 
 // ── Combat ────────────────────────────────────────────────────────────────────

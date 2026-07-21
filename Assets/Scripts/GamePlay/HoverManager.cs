@@ -18,6 +18,7 @@ namespace Freeland.Gameplay
             if (Instance == null)
             {
                 Instance = this;
+                DontDestroyOnLoad(gameObject);
             }
             else
             {

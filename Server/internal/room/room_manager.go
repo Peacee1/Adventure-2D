@@ -99,9 +99,9 @@ func (m *Manager) RemoveIfEmpty(roomID string) {
 // createRoom creates and starts a new room (must hold lock when called).
 // mapName defaults to the room ID — for Map1 the convention is roomID = "Map1".
 func (m *Manager) createRoom(id string) *Room {
-	// Map name is always "Map1" for now — room ID is for internal routing only.
+	// Map name is always "Map0" for now — room ID is for internal routing only.
 	// mapd.Get() keys on the scene/map name, not the room UUID.
-	const mapName = "Map1"
+	const mapName = "Map0"
 	r := New(id, mapName, m.mapMgr)
 	m.rooms[id] = r
 	// Inject UDP sender into game loop immediately

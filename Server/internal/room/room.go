@@ -7,6 +7,7 @@ import (
 
 	"adventure2d-server/internal/bot"
 	"adventure2d-server/internal/mapdata"
+	"adventure2d-server/internal/monster"
 	"adventure2d-server/internal/packet"
 	"adventure2d-server/internal/player"
 	"adventure2d-server/pkg/mathutil"
@@ -44,6 +45,9 @@ type Room struct {
 	// bots are server-simulated NPC bots included in each WorldState broadcast.
 	bots []*bot.WanderBot
 
+	// monsters are server-simulated enemy entities; visible only when players are present.
+	monsters []*monster.Monster
+
 	// game loop
 	loop *GameLoop
 }
@@ -62,6 +66,7 @@ func New(id string, mapName string, mgr *mapdata.Manager) *Room {
 	}
 	r.loop = NewGameLoop(r)
 	r.SpawnBots()
+	r.SpawnMonsters()
 	return r
 }
 
@@ -122,6 +127,138 @@ func (r *Room) pickWalkableSpawns(n int) []mathutil.Vector2 {
 	return result
 }
 
+// SpawnMonsters creates the initial set of monsters for this room.
+// Uses well-spread walkable tiles from mapdata (same algorithm as SpawnBots).
+func (r *Room) SpawnMonsters() {
+	const numMonsters = 6
+	spawnPoints := r.pickWalkableSpawns(numMonsters)
+	if len(spawnPoints) == 0 {
+		log.Printf("[Room:%s] No walkable tiles — monsters not spawned", r.ID)
+		return
+	}
+	for i, sp := range spawnPoints {
+		r.monsters = append(r.monsters, monster.New(i, sp))
+		log.Printf("[Room:%s] Spawned monster %d at (%.1f,%.1f)", r.ID, monster.MonsterIDBase+uint32(i), sp.X, sp.Y)
+	}
+}
+
+// MonsterAttack represents a monster melee strike to be applied this tick.
+type MonsterAttack struct {
+	MonsterID uint32
+	PlayerID  uint32
+	Damage    uint16
+}
+
+// UpdateMonsters advances all monster AIs by dt seconds.
+// ALL monsters are updated, including inactive dead ones so their respawn timers run.
+// Returns the list of melee attacks to apply this tick.
+// Called by the game loop each tick.
+func (r *Room) UpdateMonsters(dt float32) []MonsterAttack {
+	// Build a snapshot of living player positions (read-locked).
+	r.mu.RLock()
+	targetPos := make(map[uint32]mathutil.Vector2, len(r.players))
+	for id, p := range r.players {
+		if p.HP > 0 {
+			targetPos[id] = p.Position
+		}
+	}
+	r.mu.RUnlock()
+
+	var attacks []MonsterAttack
+	for _, m := range r.monsters {
+		// Note: do NOT skip inactive monsters — dead ones need their respawn timer ticked.
+		var hasTarget bool
+		var tx, ty float32
+		if m.TargetID != 0 {
+			if pos, ok := targetPos[m.TargetID]; ok {
+				hasTarget = true
+				tx, ty = pos.X, pos.Y
+			}
+		}
+		if m.Update(dt, hasTarget, tx, ty) && m.TargetID != 0 {
+			attacks = append(attacks, MonsterAttack{
+				MonsterID: m.ID,
+				PlayerID:  m.TargetID,
+				Damage:    m.ATK,
+			})
+		}
+	}
+	return attacks
+}
+
+// ApplyMonsterAttacks processes melee hits from monsters:
+// applies damage to the target player, broadcasts DamageEvent and (if killed) DieEvent.
+func (r *Room) ApplyMonsterAttacks(attacks []MonsterAttack) {
+	for _, atk := range attacks {
+		r.mu.RLock()
+		target, ok := r.players[atk.PlayerID]
+		r.mu.RUnlock()
+		if !ok {
+			continue
+		}
+
+		remaining, died := target.ApplyDamage(atk.Damage)
+
+		dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
+			AttackerID:  atk.MonsterID,
+			TargetID:    atk.PlayerID,
+			Damage:      uint32(atk.Damage),
+			RemainingHP: remaining,
+		})
+		r.BroadcastTCP(dmgMsg, 0)
+
+		if died {
+			target.GetMu().Lock()
+			if target.SM != nil {
+				target.SM.TransitionTo(player.StateDead, target)
+			}
+			target.GetMu().Unlock()
+
+			dieMsg := packet.EncodeDieEvent(packet.DieEventPacket{
+				PlayerID: atk.PlayerID,
+				KillerID: atk.MonsterID,
+			})
+			r.BroadcastTCP(dieMsg, 0)
+			log.Printf("[Room:%s] Monster %d killed player %d", r.ID, atk.MonsterID, atk.PlayerID)
+		}
+	}
+}
+
+// MonsterSnapshot returns snapshots for all active monsters.
+func (r *Room) MonsterSnapshot() []packet.MonsterSnapshot {
+	var snaps []packet.MonsterSnapshot
+	for _, m := range r.monsters {
+		if !m.Active {
+			continue
+		}
+		snaps = append(snaps, packet.MonsterSnapshot{
+			ID:    m.ID,
+			X:     m.X,
+			Y:     m.Y,
+			HP:    m.HP,
+			State: m.StateByte(),
+		})
+	}
+	return snaps
+}
+
+// setMonstersActive activates or deactivates all monsters.
+// Monsters are activated when the first player joins and deactivated when the last leaves.
+func (r *Room) setMonstersActive(active bool) {
+	for _, m := range r.monsters {
+		if active {
+			m.Activate()
+		} else {
+			m.Deactivate()
+		}
+	}
+	if active {
+		log.Printf("[Room:%s] Monsters activated (%d)", r.ID, len(r.monsters))
+	} else {
+		log.Printf("[Room:%s] Monsters deactivated — room empty", r.ID)
+	}
+}
+
 // UpdateBots advances all bot simulations by dt seconds.
 // Called by the game loop each tick.
 func (r *Room) UpdateBots(dt float32) {
@@ -137,11 +274,13 @@ func (r *Room) AddProjectile(p *Projectile) {
 }
 
 // SimulateProjectiles advances all active projectiles by dt seconds,
-// applies damage on hit, and broadcasts DamageEvent + DieEvent to all players.
+// applies damage on hit (to players AND monsters), and broadcasts events.
 // Called by the game loop each tick.
 func (r *Room) SimulateProjectiles(dt float32) {
 	r.mu.RLock()
-	targets := make(playerSnapshot, 0, len(r.players))
+	targets := make(playerSnapshot, 0, len(r.players)+len(r.monsters))
+
+	// Real player targets
 	for _, p := range r.players {
 		if p.HP == 0 {
 			continue
@@ -155,12 +294,26 @@ func (r *Room) SimulateProjectiles(dt float32) {
 			},
 		})
 	}
+
+	// Monster targets — projectiles can hit monsters too
+	for _, m := range r.monsters {
+		if !m.Active || m.StateByte() == monster.StateDead {
+			continue
+		}
+		m_ := m
+		targets = append(targets, playerTarget{
+			ID:       m_.ID,
+			Position: mathutil.Vector2{X: m_.X, Y: m_.Y},
+			ApplyDamage: func(dmg uint16) (uint16, bool) {
+				return m_.TakeDamage(dmg)
+			},
+		})
+	}
 	r.mu.RUnlock()
 
 	tick := r.projectiles.Update(dt, targets)
 
 	// Broadcast destroy events for projectiles that expired or hit this tick.
-	// Client moves bullets autonomously (dead reckoning) — no position updates needed.
 	for _, id := range tick.DestroyedID {
 		destroyMsg := packet.EncodeProjectileDestroy(packet.ProjectileDestroyPacket{ProjID: id})
 		r.BroadcastTCP(destroyMsg, 0)
@@ -168,6 +321,25 @@ func (r *Room) SimulateProjectiles(dt float32) {
 
 	// Broadcast damage and death events for hits
 	for _, h := range tick.Hits {
+		if h.TargetID >= monster.MonsterIDBase {
+			// A projectile hit a monster — trigger aggro and broadcast damage
+			for _, m := range r.monsters {
+				if m.ID == h.TargetID {
+					m.SetAggro(h.AttackerID)
+					break
+				}
+			}
+			dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
+				AttackerID:  h.AttackerID,
+				TargetID:    h.TargetID,
+				Damage:      h.Damage,
+				RemainingHP: h.RemainingHP,
+			})
+			r.BroadcastTCP(dmgMsg, 0)
+			continue
+		}
+
+		// Player hit — existing handling
 		dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
 			AttackerID:  h.AttackerID,
 			TargetID:    h.TargetID,
@@ -259,6 +431,11 @@ func (r *Room) AddPlayer(p *player.Player) []packet.PlayerInfo {
 		}
 	}
 
+	// Activate monsters when the first player joins
+	if len(r.players) == 1 {
+		r.setMonstersActive(true)
+	}
+
 	log.Printf("[Room:%s] Player %d (%s) joined. Total: %d", r.ID, p.ID, p.Username, len(r.players))
 	return existing
 }
@@ -269,6 +446,11 @@ func (r *Room) RemovePlayer(playerID uint32) {
 	defer r.mu.Unlock()
 
 	delete(r.players, playerID)
+
+	// Deactivate monsters when the last player leaves
+	if len(r.players) == 0 {
+		r.setMonstersActive(false)
+	}
 
 	leftMsg := packet.EncodePlayerLeft(packet.PlayerLeftPacket{PlayerID: playerID})
 	for _, other := range r.players {

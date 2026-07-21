@@ -7,25 +7,80 @@ using Freeland.Gameplay;
 /// <summary>
 /// GameSceneBootstrap — handles spawning player objects (local and remote)
 /// when transitioning into a gameplay scene.
+///
+/// Persistent Singleton: survives scene transitions (DontDestroyOnLoad).
+/// Listens to SceneManager.sceneLoaded and auto-bootstraps any scene whose
+/// name contains "Map" (e.g. "Map0", "Map1").
+/// Place this once in the first scene (e.g. Menu) — it will carry forward.
 /// </summary>
 public class GameSceneBootstrap : MonoBehaviour
 {
+    /// <summary>The single persistent GameSceneBootstrap instance.</summary>
+    public static GameSceneBootstrap Instance { get; private set; }
+
     [Header("Network Spawning")]
     [SerializeField] private Transform remotePlayerRoot;
 
     private LocalPlayer localPlayer;
     private readonly Dictionary<uint, RemotePlayer> remotePlayers = new();
 
-    private void Start()
+    private void Awake()
     {
-        // Ensure ProjectileManager is present — handles arrow/spell spawning from server broadcasts
+        if (Instance != null && Instance != this)
+        {
+            Debug.LogWarning("[GameSceneBootstrap] Duplicate instance destroyed.");
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+        DontDestroyOnLoad(gameObject);
+
+        // Ensure MonsterManager lives on this persistent GameObject
+        if (GetComponent<MonsterManager>() == null)
+            gameObject.AddComponent<MonsterManager>();
+    }
+
+    private void OnEnable()
+    {
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    private void OnDisable()
+    {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    /// <summary>
+    /// Called by Unity whenever a scene finishes loading.
+    /// Defers player spawning by one frame so all scene objects (NavMesh, etc.) are ready.
+    /// </summary>
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        // Only bootstrap game scenes (e.g. "Map0", "Map1")
+        if (!scene.name.StartsWith("Map")) return;
+
+        localPlayer = null;
+        remotePlayers.Clear();
+
+        // ProjectileManager lives on this persistent GameObject — re-ensure it exists
         if (GetComponent<ProjectileManager>() == null)
             gameObject.AddComponent<ProjectileManager>();
 
-        // Check if NetworkManager is connected
+        Debug.Log($"[Bootstrap] Scene '{scene.name}' loaded — will bootstrap next frame.");
+        StartCoroutine(BootstrapNextFrame());
+    }
+
+    /// <summary>
+    /// Waits one frame so all scene Start() calls finish (NavMesh, etc.) before spawning.
+    /// Mirrors the old behaviour when Bootstrap lived in the game scene and ran from Start().
+    /// </summary>
+    private System.Collections.IEnumerator BootstrapNextFrame()
+    {
+        yield return null; // wait one frame
+
         if (NetworkManager.Instance != null && NetworkManager.Instance.IsConnected)
         {
-            Debug.Log("[Bootstrap] Online mode: spawning network characters");
+            Debug.Log("[Bootstrap] Online mode: spawning network characters.");
             SpawnLocalPlayer();
             SpawnExistingRemotePlayers();
             SubscribeNetworkEvents();
@@ -41,7 +96,13 @@ public class GameSceneBootstrap : MonoBehaviour
     private void SpawnLocalPlayerOffline()
     {
         GameSession session = GameSession.Instance;
-        string prefabPath   = session.GetPrefabPath();
+        if (session == null)
+        {
+            Debug.LogWarning("[Bootstrap] SpawnLocalPlayerOffline skipped — no GameSession available (menu scene?).");
+            return;
+        }
+
+        string prefabPath = session.GetPrefabPath();
 
         var prefab = Resources.Load<GameObject>(prefabPath);
         if (prefab == null)
@@ -208,6 +269,10 @@ public class GameSceneBootstrap : MonoBehaviour
 
     private void HandleWorldState(WorldStatePacket ws)
     {
+        // Diagnostic: log counts every 100 ticks (~5 s at 20 Hz) to confirm receipt
+        if (ws.Tick % 100 == 1)
+            Debug.Log($"[Bootstrap] WorldState tick={ws.Tick} players={ws.Players?.Length ?? 0} monsters={ws.Monsters?.Length ?? 0}");
+
         foreach (var snap in ws.Players)
         {
             if (snap.PlayerID == GameSession.Instance.PlayerID) continue;

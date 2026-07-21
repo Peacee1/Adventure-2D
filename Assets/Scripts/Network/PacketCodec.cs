@@ -292,11 +292,11 @@ public static class PacketDecoder
 
     public static WorldStatePacket DecodeWorldState(byte[] payload)
     {
-        using var r = new BinaryReader(new MemoryStream(payload));
-        uint tick   = r.ReadUInt32();
-        ushort count = r.ReadUInt16();
-        var players = new PlayerSnapshot[count];
-        for (int i = 0; i < count; i++)
+        using var r  = new BinaryReader(new MemoryStream(payload));
+        uint tick    = r.ReadUInt32();
+        ushort pCount = r.ReadUInt16();
+        var players  = new PlayerSnapshot[pCount];
+        for (int i = 0; i < pCount; i++)
         {
             players[i] = new PlayerSnapshot
             {
@@ -309,7 +309,27 @@ public static class PacketDecoder
                 State    = r.ReadByte(),
             };
         }
-        return new WorldStatePacket { Tick = tick, Players = players };
+
+        // Decode monster snapshots (appended after players — backward-compatible)
+        MonsterSnapshot[] monsters = System.Array.Empty<MonsterSnapshot>();
+        if (r.BaseStream.Position < r.BaseStream.Length)
+        {
+            ushort mCount = r.ReadUInt16();
+            monsters = new MonsterSnapshot[mCount];
+            for (int i = 0; i < mCount; i++)
+            {
+                monsters[i] = new MonsterSnapshot
+                {
+                    ID    = r.ReadUInt32(),
+                    X     = r.ReadSingle(),
+                    Y     = r.ReadSingle(),
+                    HP    = r.ReadUInt16(),
+                    State = r.ReadByte(),
+                };
+            }
+        }
+
+        return new WorldStatePacket { Tick = tick, Players = players, Monsters = monsters };
     }
 
     // ── Combat ────────────────────────────────────────────────────────────────

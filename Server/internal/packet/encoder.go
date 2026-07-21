@@ -155,6 +155,15 @@ func EncodeWorldState(p WorldStatePacket) []byte {
 		writeUint16(buf, snap.HP)
 		writeUint8(buf, snap.State)
 	}
+	// Monsters follow players in the same packet
+	writeUint16(buf, uint16(len(p.Monsters)))
+	for _, m := range p.Monsters {
+		writeUint32(buf, m.ID)
+		writeFloat32(buf, m.X)
+		writeFloat32(buf, m.Y)
+		writeUint16(buf, m.HP)
+		writeUint8(buf, m.State)
+	}
 	return EncodeFrame(TypeWorldState, buf.Bytes())
 }
 

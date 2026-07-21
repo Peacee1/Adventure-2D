@@ -75,6 +75,9 @@ public class LocalPlayer : MonoBehaviour, IHumanController
     private bool  isDead;
     private float sendTimer;
 
+    // Y-key toggle: hide all player sprites in the scene
+    private bool _playersHidden;
+
     // Dash distance scaling — mirrors server's ComputeMaxDashDistance()
     // Updated via UpdateMoveSpeed() when server sends stats.
     private float _moveSpeed = 10f;
@@ -227,6 +230,7 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         HandleClickInput();
         HandleAttackInput();
         HandleDashInput();
+        HandleHidePlayersInput();
         UpdateAimDirection();
         UpdatePositionSync();
         TrySendUDP();
@@ -240,6 +244,27 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         {
             hitboxRenderer.gameObject.SetActive(showHitbox);
         }
+    }
+
+    /// <summary>
+    /// Press Y to toggle visibility of remote player sprites only (local player unaffected).
+    /// </summary>
+    private void HandleHidePlayersInput()
+    {
+        if (Keyboard.current == null) return;
+        if (!Keyboard.current.yKey.wasPressedThisFrame) return;
+
+        _playersHidden = !_playersHidden;
+
+        // Only toggle RemotePlayer objects — local player sprite is never hidden
+        var remotePlayers = FindObjectsByType<RemotePlayer>(FindObjectsSortMode.None);
+        foreach (var rp in remotePlayers)
+        {
+            foreach (var sr in rp.GetComponentsInChildren<SpriteRenderer>(includeInactive: true))
+                sr.enabled = !_playersHidden;
+        }
+
+        Debug.Log($"[LocalPlayer] Remote players {(_playersHidden ? "hidden" : "visible")} (Y key) — count={remotePlayers.Length}");
     }
 
     // ─── Stats ────────────────────────────────────────────────────────────────
@@ -385,6 +410,16 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         Vector3 navTo   = worldTarget;
         navTo.z         = navMeshZ;
 
+        // Snap origin to NavMesh — server position may be slightly off-mesh
+        // (e.g., after map transition or position saved on a different map).
+        if (NavMesh.SamplePosition(navFrom, out var hitFrom, 10f, NavMesh.AllAreas))
+            navFrom = hitFrom.position;
+        else
+        {
+            Debug.LogWarning($"[LocalPlayer] SetMoveTarget: server position {_serverPosition} is too far from NavMesh — move skipped.");
+            return;
+        }
+
         if (NavMesh.SamplePosition(navTo, out var hitTo, 100f, NavMesh.AllAreas))
             navTo = hitTo.position;
 
@@ -474,7 +509,25 @@ public class LocalPlayer : MonoBehaviour, IHumanController
         {
             if (snap.PlayerID != playerID) continue;
 
-            _serverPosition  = new Vector3(snap.X, snap.Y, 0f);
+            Vector3 serverPos = new Vector3(snap.X, snap.Y, 0f);
+
+            // If the server position is outside the NavMesh, snap to the nearest valid point.
+            // This handles stale DB positions after a map transition (e.g., Map1 → Map0).
+            if (navReady)
+            {
+                Vector3 candidate = new Vector3(snap.X, snap.Y, navMeshZ);
+                if (!NavMesh.SamplePosition(candidate, out var hit, 0.5f, NavMesh.AllAreas))
+                {
+                    // Off-mesh: find the nearest valid point and use it instead
+                    if (NavMesh.SamplePosition(candidate, out var nearest, 500f, NavMesh.AllAreas))
+                    {
+                        serverPos = new Vector3(nearest.position.x, nearest.position.y, 0f);
+                        Debug.LogWarning($"[LocalPlayer] Server pos ({snap.X:F1},{snap.Y:F1}) off NavMesh — snapped to ({serverPos.x:F1},{serverPos.y:F1})");
+                    }
+                }
+            }
+
+            _serverPosition  = serverPos;
             _serverDirection = new Vector2(snap.DirX, snap.DirY);
             _serverState     = snap.State;
             break;

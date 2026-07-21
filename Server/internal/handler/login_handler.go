@@ -154,7 +154,7 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 	}
 
 	mapName := record.MapName
-	if mapName == "" { mapName = "Map1" }
+	if mapName == "" { mapName = "Map0" }
 
 	// Guard against stale out-of-bounds positions saved before walkability was enforced.
 	// SafeSpawn returns the same position if walkable, or the map's default spawn if not.

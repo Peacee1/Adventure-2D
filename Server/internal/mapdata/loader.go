@@ -55,10 +55,14 @@ func (m *Manager) LoadAll(dir string) error {
 			log.Printf("[MapLoader] WARN: skipping %q: %v", e.Name(), err)
 			continue
 		}
-		m.maps[md.Name] = md
+		// Use the filename (without extension) as the authoritative key.
+		// The embedded Name field in the binary may be stale/incorrect.
+		fileKey := strings.TrimSuffix(e.Name(), ".mapdata")
+		md.Name = fileKey
+		m.maps[fileKey] = md
 		loaded++
-		log.Printf("[MapLoader] Loaded %q: id=%d tiles=%d spawns=%d",
-			md.Name, md.MapID, m.tileCount(md), len(md.Spawns))
+		log.Printf("[MapLoader] Loaded %q (file=%s): id=%d tiles=%d spawns=%d",
+			fileKey, e.Name(), md.MapID, m.tileCount(md), len(md.Spawns))
 	}
 
 	if loaded == 0 {

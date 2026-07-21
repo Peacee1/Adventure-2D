@@ -29,7 +29,7 @@ public class GameSession : MonoBehaviour
     // ─── Map ──────────────────────────────────────────────────────────────────
 
     /// <summary>Tên scene Unity cần load. Mặc định "Map1" cho player mới.</summary>
-    public string   MapName   { get; private set; } = "Map1";
+    public string   MapName   { get; private set; } = "Map0";
 
     // ─── Room ────────────────────────────────────────────────────────────────
 

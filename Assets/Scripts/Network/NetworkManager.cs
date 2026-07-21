@@ -530,10 +530,20 @@ public struct PlayerSnapshot
 }
 
 [Serializable]
+public struct MonsterSnapshot
+{
+    public uint   ID;
+    public float  X, Y;
+    public ushort HP;
+    public byte   State; // 0=Idle 1=Wander 5=Dead
+}
+
+[Serializable]
 public struct WorldStatePacket
 {
-    public uint             Tick;
-    public PlayerSnapshot[] Players;
+    public uint              Tick;
+    public PlayerSnapshot[]  Players;
+    public MonsterSnapshot[] Monsters;
 }
 
 [Serializable]

@@ -64,10 +64,14 @@ func (gl *GameLoop) Run() {
 
 		case <-ticker.C:
 			gl.tick++
-			gl.simulateMovement()              // real players
-			gl.room.UpdateBots(dtSec)           // NPC wander bots
-			gl.room.SimulateProjectiles(dtSec)  // projectile collision
-			gl.broadcastWorldState()
+				gl.simulateMovement()             // real players
+				gl.room.UpdateBots(dtSec)          // NPC wander bots
+				// Update monsters and apply any melee attacks they trigger
+				if attacks := gl.room.UpdateMonsters(dtSec); len(attacks) > 0 {
+					gl.room.ApplyMonsterAttacks(attacks)
+				}
+				gl.room.SimulateProjectiles(dtSec) // projectile collision
+				gl.broadcastWorldState()
 		}
 	}
 }
@@ -105,13 +109,15 @@ func (gl *GameLoop) broadcastWorldState() {
 	}
 
 	snaps := gl.room.Snapshot()
-	if len(snaps) == 0 {
+	monsterSnaps := gl.room.MonsterSnapshot()
+	if len(snaps) == 0 && len(monsterSnaps) == 0 {
 		return
 	}
 
 	worldState := packet.EncodeWorldState(packet.WorldStatePacket{
-		Tick:    gl.tick,
-		Players: snaps,
+		Tick:     gl.tick,
+		Players:  snaps,
+		Monsters: monsterSnaps,
 	})
 
 	gl.room.mu.RLock()

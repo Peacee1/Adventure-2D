@@ -281,16 +281,15 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 	)
 
 	if err == sql.ErrNoRows {
-		log.Printf("[DB] GetOrCreatePlayer: no character at slot=%d for accountID=%d — creating new...", slot, accountID)
-
-		charName := fmt.Sprintf("%s_slot%d", username, slot+1)
+		// Character name is simply the account username — no slot suffix needed.
+		charName := username
 		defStats := player.DefaultStats(player.JobArcher)
 
 		insertQuery := `INSERT INTO players
 		                (account_id, slot, username, job_class, x, y, hp, level, exp, map_name,
 		                 max_hp, atk_physical, atk_magic, def_physical, def_magic,
 		                 attack_range, move_speed, attack_speed, inventory, buffs, skills)
-		                VALUES (?, ?, ?, 1, 0.0, 0.0, ?, 1, 0, 'Map1',
+		                VALUES (?, ?, ?, 1, 0.0, 0.0, ?, 1, 0, 'Map0',
 		                        ?, ?, ?, ?, ?, ?, ?, ?, '', '', '')`
 		res, err := d.db.Exec(insertQuery, accountID, slot, charName,
 			int(defStats.MaxHP),
@@ -300,7 +299,8 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 		)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				charName = fmt.Sprintf("%s_%d_slot%d", username, accountID, slot+1)
+				// Fallback: username is already taken by another account — append accountID to disambiguate.
+				charName = fmt.Sprintf("%s_%d", username, accountID)
 				log.Printf("[DB] GetOrCreatePlayer: charName conflict, retrying with name=%q", charName)
 				res, err = d.db.Exec(insertQuery, accountID, slot, charName,
 					int(defStats.MaxHP),
@@ -319,7 +319,7 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 			return nil, fmt.Errorf("get last insert id error: %w", err)
 		}
 
-		log.Printf("[DB] GetOrCreatePlayer: NEW character name=%q id=%d slot=%d job=Archer level=1 map=Map1", charName, lastID, slot)
+		log.Printf("[DB] GetOrCreatePlayer: NEW character name=%q id=%d slot=%d job=Archer level=1 map=Map0", charName, lastID, slot)
 		return &player.PlayerRecord{
 			ID:          uint32(lastID),
 			AccountID:   accountID,
@@ -331,7 +331,7 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 			HP:          defStats.MaxHP,
 			Level:       1,
 			Exp:         0,
-			MapName:     "Map1",
+			MapName:     "Map0",
 			MaxHP:       defStats.MaxHP,
 			ATKPhysical: defStats.ATKPhysical,
 			ATKMagic:    defStats.ATKMagic,
@@ -350,7 +350,7 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 		return nil, fmt.Errorf("select character error: %w", err)
 	}
 
-	if rec.MapName == "" { rec.MapName = "Map1" } // fallback an toàn
+	if rec.MapName == "" { rec.MapName = "Map0" } // safe fallback
 	rec.JobClass    = player.JobClass(jobInt)
 	rec.HP          = uint16(hpInt)
 	rec.MaxHP       = uint16(maxHPInt)

@@ -245,7 +245,7 @@ public class MenuScene : MonoBehaviour
     {
         string targetScene = GameSession.Instance != null && !string.IsNullOrEmpty(GameSession.Instance.MapName)
             ? GameSession.Instance.MapName
-            : "Map1";
+            : "Map0";
 
         Debug.Log($"[Menu] Joined room {roomID} (existing={existingPlayers.Count}). Loading scene '{targetScene}'...");
         ShowStatus("Joined room! Loading...");

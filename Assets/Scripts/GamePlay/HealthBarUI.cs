@@ -78,6 +78,28 @@ public class HealthBarUI : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Sets HP values directly — no BaseObject required.
+    /// Used by MonsterView and other non-BaseObject entities.
+    /// Calling this disconnects any existing BaseObject target.
+    /// </summary>
+    public void SetValues(float hp, float maxHP)
+    {
+        _target    = null;
+        _lastHP    = hp;
+        _lastMaxHP = maxHP;
+        if (maxHP <= 0f) return;
+        float ratio = Mathf.Clamp01(hp / maxHP);
+        if (fillImage != null)
+            fillImage.fillAmount = ratio;
+        if (parentImage != null)
+        {
+            bool show = hp > 0f && (!hideWhenFull || ratio < 1f);
+            if (parentImage.gameObject.activeSelf != show)
+                parentImage.gameObject.SetActive(show);
+        }
+    }
+
     // ─── Private Methods ──────────────────────────────────────────────────────
 
     private void UpdateHealthDisplay(bool forceUpdate)
