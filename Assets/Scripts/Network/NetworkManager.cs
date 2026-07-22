@@ -535,6 +535,37 @@ public class NetworkManager : MonoBehaviour
                             defMag:      spAck.NewDEFMagic,
                             skillPoints: (int)spAck.NewSkillPoints
                         );
+
+                        var lp = FindAnyObjectByType<LocalPlayer>();
+                        if (lp != null)
+                        {
+                            var baseObj = lp.GetComponent<BaseObject>();
+                            if (baseObj != null)
+                            {
+                                int oldMaxHP = baseObj.MaxHP;
+                                int oldMaxMP = baseObj.MaxMP;
+
+                                baseObj.MaxHP       = spAck.NewMaxHP;
+                                baseObj.MaxMP       = spAck.NewMaxMP;
+                                baseObj.ATKPhysical = spAck.NewATKPhysical;
+                                baseObj.ATKMagic    = spAck.NewATKMagic;
+                                baseObj.DEFPhysical = spAck.NewDEFPhysical;
+                                baseObj.DEFMagic    = spAck.NewDEFMagic;
+
+                                // Increase current HP/MP by the upgraded amount
+                                if (spAck.NewMaxHP > oldMaxHP)
+                                    baseObj.HP += (spAck.NewMaxHP - oldMaxHP);
+                                else if (baseObj.HP > baseObj.MaxHP)
+                                    baseObj.HP = baseObj.MaxHP;
+
+                                if (spAck.NewMaxMP > oldMaxMP)
+                                    baseObj.MP += (spAck.NewMaxMP - oldMaxMP);
+                                else if (baseObj.MP > baseObj.MaxMP)
+                                    baseObj.MP = baseObj.MaxMP;
+
+                                GameSession.Instance.SetHPAndMP((ushort)baseObj.HP, spAck.NewMaxHP, (ushort)baseObj.MP, spAck.NewMaxMP);
+                            }
+                        }
                     }
                     OnSpendSkillPointAck?.Invoke(spAck);
                     PlayerStatusUI.Instance?.Refresh();

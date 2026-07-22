@@ -104,6 +104,14 @@ public class GameSession : MonoBehaviour
         Debug.Log($"[GameSession] SetCombatStats: HP={maxHP} MP={maxMP} ATKPhy={atkPhy} ATKMag={atkMag} DEFPhy={defPhy} DEFMag={defMag} SP={skillPoints}");
     }
 
+    public void SetHPAndMP(ushort hp, ushort maxHP, ushort mp, ushort maxMP)
+    {
+        HP    = hp;
+        MaxHP = maxHP;
+        MP    = mp;
+        MaxMP = maxMP;
+    }
+
     /// <summary>Gọi khi JoinRoom thành công. Lưu danh sách players hiện có để Bootstrap spawn.</summary>
     public void SetRoom(string roomID, List<PlayerInfo> existingPlayers)
     {
