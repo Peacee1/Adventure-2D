@@ -3173,6 +3173,11 @@ MonoBehaviour:
   atkPhysicalUpgradeButton: {fileID: 9168510367715605751}
   atkMagicUpgradeButton: {fileID: 7924386018530086762}
   defUpgradeButton: {fileID: 2879150680452624841}
+  hpLevelText: {fileID: 5967606003870789953}
+  mpLevelText: {fileID: 6093409319385452884}
+  atkPhysicalLevelText: {fileID: 1345345948888634572}
+  atkMagicLevelText: {fileID: 6952186983607523701}
+  defLevelText: {fileID: 5358762996041638122}
   toggleKey: 32
 --- !u!1 &6284806344602764265
 GameObject:

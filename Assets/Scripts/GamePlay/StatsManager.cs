@@ -63,6 +63,12 @@ public class StatsManager : MonoBehaviour
     [SerializeField] private TMP_Text atkMagicLevelText;
     [SerializeField] private TMP_Text defLevelText;
 
+    [Header("Page System (Assign in Inspector or auto-find)")]
+    [SerializeField] private GameObject page1Object;
+    [SerializeField] private GameObject page2Object;
+    [SerializeField] private Button     page1Button;
+    [SerializeField] private Button     page2Button;
+
     [Header("Toggle key (default: Tab)")]
     [SerializeField] private KeyCode toggleKey = KeyCode.Tab;
 
@@ -128,7 +134,15 @@ public class StatsManager : MonoBehaviour
     {
         if (!_isMapScene) return;
         SetVisible(true);
+        ShowPage(1); // Default to Page 1 on open
         Refresh();
+    }
+
+    /// <summary>Switches active stats page (1 or 2).</summary>
+    public void ShowPage(int pageNumber)
+    {
+        if (page1Object != null) page1Object.SetActive(pageNumber == 1);
+        if (page2Object != null) page2Object.SetActive(pageNumber == 2);
     }
 
     /// <summary>Hide the stats panel.</summary>
@@ -232,11 +246,63 @@ public class StatsManager : MonoBehaviour
 
     private void BindButtonListeners()
     {
+        AutoWirePages();
+
         BindButton(hpUpgradeButton,          UpgradeHP);
         BindButton(mpUpgradeButton,          UpgradeMP);
         BindButton(atkPhysicalUpgradeButton, UpgradeATKPhysical);
         BindButton(atkMagicUpgradeButton,    UpgradeATKMagic);
         BindButton(defUpgradeButton,         UpgradeDEF);
+
+        BindButton(page1Button, () => ShowPage(1));
+        BindButton(page2Button, () => ShowPage(2));
+    }
+
+    private void AutoWirePages()
+    {
+        Transform root = _panel != null ? _panel : (_canvas != null ? _canvas.transform : transform);
+
+        if (page1Object == null) page1Object = FindChildGameObject(root, "Page1", "Page 1", "page1", "page 1");
+        if (page2Object == null) page2Object = FindChildGameObject(root, "Page2", "Page 2", "page2", "page 2");
+
+        if (page1Button == null) page1Button = FindChildButton(root, "BtnPage1", "Btn Page 1", "Page1Btn", "Page 1 Btn", "BtnPage 1", "Page1");
+        if (page2Button == null) page2Button = FindChildButton(root, "BtnPage2", "Btn Page 2", "Page2Btn", "Page 2 Btn", "BtnPage 2", "Page2");
+    }
+
+    private GameObject FindChildGameObject(Transform root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var t = FindDeepChild(root, name);
+            if (t != null) return t.gameObject;
+        }
+        return null;
+    }
+
+    private Button FindChildButton(Transform root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var t = FindDeepChild(root, name);
+            if (t != null)
+            {
+                var btn = t.GetComponent<Button>();
+                if (btn != null) return btn;
+            }
+        }
+        return null;
+    }
+
+    private Transform FindDeepChild(Transform parent, string name)
+    {
+        foreach (Transform child in parent)
+        {
+            if (child.name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
+                return child;
+            var result = FindDeepChild(child, name);
+            if (result != null) return result;
+        }
+        return null;
     }
 
     private static void BindButton(Button btn, UnityEngine.Events.UnityAction action)
