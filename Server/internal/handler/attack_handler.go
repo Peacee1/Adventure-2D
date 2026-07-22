@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"adventure2d-server/internal/monster"
 	"adventure2d-server/internal/packet"
 	"adventure2d-server/internal/player"
 	"adventure2d-server/internal/room"
@@ -43,95 +44,197 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 		return
 	}
 
-	// Tính sát thương (đọc Stats an toàn — Stats không thay đổi sau init)
+	// Compute damage with crit check
 	rawDamage := uint16(attacker.Stats.ATKPhysical)
+	finalDamage, isCrit := player.ComputeAttackDamage(rawDamage, attacker.Stats.CritRate)
 
-	log.Printf("[AttackHandler] Player %d (%s) attacking: targetID=%d dir=(%.2f,%.2f) dmg=%d",
-		attacker.ID, attacker.Username, req.TargetID, req.DirX, req.DirY, rawDamage)
+	log.Printf("[AttackHandler] Player %d (%s) attacking: targetID=%d dir=(%.2f,%.2f) dmg=%d crit=%v",
+		attacker.ID, attacker.Username, req.TargetID, req.DirX, req.DirY, finalDamage, isCrit)
 
 	// Nếu có TargetID cụ thể (melee/single target)
 	if req.TargetID != 0 {
-		target, ok := r.GetPlayer(req.TargetID)
-		if !ok {
-			log.Printf("[AttackHandler] Target %d not found in room %s", req.TargetID, r.ID)
-			return
-		}
-
-		// Đọc HP target thread-safe
-		_, targetPos, _, targetHP, _ := target.Snapshot()
-		if targetHP == 0 {
-			log.Printf("[AttackHandler] Target %d already dead — attack skipped", req.TargetID)
-			return
-		}
-
-		// Kiểm tra tầm đánh server-side
-		dist := attackerPos.Distance(targetPos)
-		maxRange := attacker.Stats.AttackRange * 1.2 // 20% tolerance
-		if dist > maxRange {
-			log.Printf("[AttackHandler] Player %d out of range to hit %d (dist=%.2f > range=%.2f)",
-				attacker.ID, req.TargetID, dist, maxRange)
-			return
-		}
-
-		remaining, died := target.ApplyDamage(rawDamage)
-		log.Printf("[AttackHandler] Hit: attacker=%d → target=%d rawDmg=%d remaining=%d died=%v",
-			attacker.ID, req.TargetID, rawDamage, remaining, died)
-
-		// Transition attacker to AttackState via SM
-		attacker.GetMu().Lock()
-		if attacker.SM != nil && attacker.State != player.StateDead {
-			attacker.SM.TransitionTo(player.StateAttack, attacker)
-		}
-		attacker.GetMu().Unlock()
-
-		// Broadcast projectile for ranged classes (Archer)
-		if attacker.JobClass == player.JobArcher {
-			dir := mathutil.Vector2{X: req.DirX, Y: req.DirY}.Normalized()
-			offsetX := float32(1.85)
-			if dir.X < 0 {
-				offsetX = -1.85
+		if req.TargetID >= monster.MonsterIDBase {
+			// Target là Monster
+			targetMonster, ok := r.GetMonster(req.TargetID)
+			if !ok || !targetMonster.Active || targetMonster.StateByte() == monster.StateDead {
+				log.Printf("[AttackHandler] Target monster %d not found or dead in room %s", req.TargetID, r.ID)
+				return
 			}
-			spawnX := attackerPos.X + offsetX
-			spawnY := attackerPos.Y + 1.0
-			projMsg := packet.EncodeProjectileSpawn(packet.ProjectileSpawnPacket{
-				OwnerID:  attacker.ID,
-				X:        spawnX,
-				Y:        spawnY,
-				DirX:     dir.X,
-				DirY:     dir.Y,
-				Speed:    45.0,
-				Range:    attacker.Stats.AttackRange,
-				ProjType: 0, // 0 = Arrow
-			})
-			r.BroadcastTCP(projMsg, 0)
-			log.Printf("[AttackHandler] Archer %d fired arrow at (%.1f,%.1f) dir=(%.2f,%.2f)",
-				attacker.ID, spawnX, spawnY, dir.X, dir.Y)
-		}
 
-		// Broadcast damage event
-		dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
-			AttackerID:  attacker.ID,
-			TargetID:    req.TargetID,
-			Damage:      uint32(rawDamage),
-			RemainingHP: remaining,
-		})
-		r.BroadcastTCP(dmgMsg, 0)
-
-		if died {
-			// Transition target to DeadState via SM
-			target.GetMu().Lock()
-			if target.SM != nil {
-				target.SM.TransitionTo(player.StateDead, target)
+			mPos := mathutil.Vector2{X: targetMonster.X, Y: targetMonster.Y}
+			dist := attackerPos.Distance(mPos)
+			maxRange := attacker.Stats.AttackRange * 1.5 // 50% tolerance for monster movement
+			if dist > maxRange {
+				log.Printf("[AttackHandler] Player %d out of range to hit monster %d (dist=%.2f > range=%.2f)",
+					attacker.ID, req.TargetID, dist, maxRange)
+				return
 			}
-			target.GetMu().Unlock()
 
-			dieMsg := packet.EncodeDieEvent(packet.DieEventPacket{
-				PlayerID: req.TargetID,
-				KillerID: attacker.ID,
+			remaining, died := targetMonster.TakeDamage(finalDamage, attacker.ID)
+			log.Printf("[AttackHandler] Hit monster: attacker=%d → monster=%d dmg=%d crit=%v remaining=%d died=%v",
+				attacker.ID, req.TargetID, finalDamage, isCrit, remaining, died)
+
+			// Apply life steal to attacker
+			attacker.GetMu().Lock()
+			attacker.ApplyLifeSteal(finalDamage)
+			attacker.GetMu().Unlock()
+
+			// Transition attacker to AttackState via SM
+			attacker.GetMu().Lock()
+			if attacker.SM != nil && attacker.State != player.StateDead {
+				attacker.SM.TransitionTo(player.StateAttack, attacker)
+			}
+			attacker.GetMu().Unlock()
+
+			// Broadcast projectile for ranged classes (Archer)
+			if attacker.JobClass == player.JobArcher {
+				dir := mathutil.Vector2{X: req.DirX, Y: req.DirY}.Normalized()
+				offsetX := float32(1.85)
+				if dir.X < 0 {
+					offsetX = -1.85
+				}
+				spawnX := attackerPos.X + offsetX
+				spawnY := attackerPos.Y + 1.0
+				projMsg := packet.EncodeProjectileSpawn(packet.ProjectileSpawnPacket{
+					OwnerID:  attacker.ID,
+					X:        spawnX,
+					Y:        spawnY,
+					DirX:     dir.X,
+					DirY:     dir.Y,
+					Speed:    45.0,
+					Range:    attacker.Stats.AttackRange,
+					ProjType: 0, // 0 = Arrow
+				})
+				r.BroadcastTCP(projMsg, 0)
+			}
+
+			// Broadcast damage event
+			dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
+				AttackerID:  attacker.ID,
+				TargetID:    req.TargetID,
+				Damage:      uint32(finalDamage),
+				RemainingHP: remaining,
+				IsCrit:      isCrit,
 			})
-			r.BroadcastTCP(dieMsg, 0)
-			log.Printf("[AttackHandler] Player %d (%s) killed by %d (%s)",
-				req.TargetID, target.Username, attacker.ID, attacker.Username)
+			r.BroadcastTCP(dmgMsg, 0)
+
+			if died {
+				attacker.GetMu().Lock()
+				leveledUp, newLevel, newExp, _ := attacker.GainExp(monster.MonsterExpReward)
+				newSP := attacker.SkillPoints
+				attacker.GetMu().Unlock()
+
+				expMsg := packet.EncodeExpGain(packet.ExpGainPacket{
+					PlayerID:  attacker.ID,
+					ExpGained: uint32(monster.MonsterExpReward),
+					NewExp:    uint32(newExp),
+					NewLevel:  uint32(newLevel),
+				})
+				attacker.SendTCP(expMsg)
+
+				if leveledUp {
+					lvlMsg := packet.EncodeLevelUp(packet.LevelUpPacket{
+						PlayerID:       attacker.ID,
+						NewLevel:       uint32(newLevel),
+						NewExp:         uint32(newExp),
+						NewSkillPoints: uint32(newSP),
+					})
+					attacker.SendTCP(lvlMsg)
+				}
+				log.Printf("[AttackHandler] Monster %d killed by player %d (%s) — awarded %d EXP (Level %d, EXP %d)",
+					req.TargetID, attacker.ID, attacker.Username, monster.MonsterExpReward, newLevel, newExp)
+			}
+
+		} else {
+			// Target là Player
+			target, ok := r.GetPlayer(req.TargetID)
+			if !ok {
+				log.Printf("[AttackHandler] Target %d not found in room %s", req.TargetID, r.ID)
+				return
+			}
+
+			// Đọc HP target thread-safe
+			_, targetPos, _, targetHP, _ := target.Snapshot()
+			if targetHP == 0 {
+				log.Printf("[AttackHandler] Target %d already dead — attack skipped", req.TargetID)
+				return
+			}
+
+			// Kiểm tra tầm đánh server-side
+			dist := attackerPos.Distance(targetPos)
+			maxRange := attacker.Stats.AttackRange * 1.2 // 20% tolerance
+			if dist > maxRange {
+				log.Printf("[AttackHandler] Player %d out of range to hit %d (dist=%.2f > range=%.2f)",
+					attacker.ID, req.TargetID, dist, maxRange)
+				return
+			}
+
+			remaining, died := target.ApplyDamage(finalDamage)
+			log.Printf("[AttackHandler] Hit: attacker=%d → target=%d dmg=%d crit=%v remaining=%d died=%v",
+				attacker.ID, req.TargetID, finalDamage, isCrit, remaining, died)
+
+			// Apply life steal to attacker
+			attacker.GetMu().Lock()
+			attacker.ApplyLifeSteal(finalDamage)
+			attacker.GetMu().Unlock()
+
+			// Transition attacker to AttackState via SM
+			attacker.GetMu().Lock()
+			if attacker.SM != nil && attacker.State != player.StateDead {
+				attacker.SM.TransitionTo(player.StateAttack, attacker)
+			}
+			attacker.GetMu().Unlock()
+
+			// Broadcast projectile for ranged classes (Archer)
+			if attacker.JobClass == player.JobArcher {
+				dir := mathutil.Vector2{X: req.DirX, Y: req.DirY}.Normalized()
+				offsetX := float32(1.85)
+				if dir.X < 0 {
+					offsetX = -1.85
+				}
+				spawnX := attackerPos.X + offsetX
+				spawnY := attackerPos.Y + 1.0
+				projMsg := packet.EncodeProjectileSpawn(packet.ProjectileSpawnPacket{
+					OwnerID:  attacker.ID,
+					X:        spawnX,
+					Y:        spawnY,
+					DirX:     dir.X,
+					DirY:     dir.Y,
+					Speed:    45.0,
+					Range:    attacker.Stats.AttackRange,
+					ProjType: 0, // 0 = Arrow
+				})
+				r.BroadcastTCP(projMsg, 0)
+				log.Printf("[AttackHandler] Archer %d fired arrow at (%.1f,%.1f) dir=(%.2f,%.2f)",
+					attacker.ID, spawnX, spawnY, dir.X, dir.Y)
+			}
+
+			// Broadcast damage event
+			dmgMsg := packet.EncodeDamageEvent(packet.DamageEventPacket{
+				AttackerID:  attacker.ID,
+				TargetID:    req.TargetID,
+				Damage:      uint32(finalDamage),
+				RemainingHP: remaining,
+				IsCrit:      isCrit,
+			})
+			r.BroadcastTCP(dmgMsg, 0)
+
+			if died {
+				// Transition target to DeadState via SM
+				target.GetMu().Lock()
+				if target.SM != nil {
+					target.SM.TransitionTo(player.StateDead, target)
+				}
+				target.GetMu().Unlock()
+
+				dieMsg := packet.EncodeDieEvent(packet.DieEventPacket{
+					PlayerID: req.TargetID,
+					KillerID: attacker.ID,
+				})
+				r.BroadcastTCP(dieMsg, 0)
+				log.Printf("[AttackHandler] Player %d (%s) killed by %d (%s)",
+					req.TargetID, target.Username, attacker.ID, attacker.Username)
+			}
 		}
 
 	} else {
@@ -163,7 +266,8 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 
 			// Capture locals for the goroutine closure
 			attackerID := attacker.ID
-			damage     := uint16(rawDamage)
+			rawDamage := uint16(attacker.Stats.ATKPhysical)
+			damage, isCrit := player.ComputeAttackDamage(rawDamage, attacker.Stats.CritRate)
 			attackRange := attacker.Stats.AttackRange
 
 			go func() {
@@ -178,6 +282,7 @@ func (h *AttackHandler) Handle(payload []byte, attackerSession *player.Session) 
 					Speed:     45.0,
 					MaxRange:  attackRange,
 					Damage:    damage,
+					IsCrit:    isCrit,
 				}
 				r.AddProjectile(proj)
 

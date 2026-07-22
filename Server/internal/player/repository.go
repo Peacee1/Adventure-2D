@@ -9,13 +9,15 @@ type PlayerRecord struct {
 	JobClass  JobClass
 	X, Y      float32
 	HP        uint16
-	Level     int
-	Exp       int
+	Level       int
+	Exp         int
+	SkillPoints int
 	MapName   string // Last scene the player was in, default "Map1"
 	CreatedAt string // Character creation date (ISO 8601)
 
 	// Combat stats persisted in the DB (supports upgrades/buffs)
 	MaxHP       uint16
+	MaxMP       uint16
 	ATKPhysical uint16
 	ATKMagic    uint16
 	DEFPhysical uint16
@@ -23,6 +25,8 @@ type PlayerRecord struct {
 	AttackRange float32
 	MoveSpeed   float32
 	AttackSpeed float32 // seconds per attack — fallback to DefaultStats if 0
+	CritRate    float32 // 0.0–1.0 critical hit chance
+	LifeSteal   float32 // 0.0–1.0 fraction of damage restored as HP
 
 	// Text-based data (JSON or CSV depending on future game logic)
 	Inventory string // Item storage

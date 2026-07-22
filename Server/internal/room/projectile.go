@@ -30,6 +30,7 @@ type Projectile struct {
 	Speed       float32          // units per second
 	MaxRange    float32          // self-destructs after travelling this distance
 	Damage      uint16
+	IsCrit      bool             // true if damage was already doubled by a critical hit
 	Travelled   float32 // total distance covered so far
 }
 
@@ -58,6 +59,7 @@ type HitEvent struct {
 	Damage      uint32
 	RemainingHP uint16
 	Died        bool
+	IsCrit      bool // propagated from Projectile.IsCrit
 }
 
 // TickResult is returned by Update() each tick.
@@ -118,6 +120,7 @@ func (pp *ProjectilePool) Update(dt float32, players playerSnapshot) TickResult 
 					Damage:      uint32(proj.Damage),
 					RemainingHP: remaining,
 					Died:        died,
+					IsCrit:      proj.IsCrit,
 				})
 				result.DestroyedID = append(result.DestroyedID, proj.ID)
 				log.Printf("[Projectile:%d] Hit: owner=%d → target=%d dmg=%d remaining=%d died=%v",

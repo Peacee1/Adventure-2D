@@ -10,7 +10,7 @@ type LoginReqPacket struct {
 }
 
 // LoginAckPacket: server response after authentication.
-// Contains only session/spawn data. Stats are kept server-side (DB → player.Stats).
+// Contains session/spawn data and all combat stats for the StatsManager.
 type LoginAckPacket struct {
 	Success  bool
 	PlayerID uint32
@@ -24,6 +24,16 @@ type LoginAckPacket struct {
 	MapName  string  // Unity scene name to load, e.g. "Map1"
 	CharName string  // Character's actual database name (players.username)
 	Message  string  // Error message if Success=false
+
+	// ── Combat stats (for StatsManager display) ────────────────────────────────
+	MaxMP       uint16
+	ATKPhysical uint16
+	ATKMagic    uint16
+	DEFPhysical uint16
+	DEFMagic    uint16
+	SkillPoints uint32
+	CritRate    float32 // 0.0–1.0
+	LifeSteal   float32 // 0.0–1.0
 }
 
 // RegisterReqPacket: sent by the client when registering an account.

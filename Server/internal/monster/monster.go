@@ -40,10 +40,10 @@ const (
 
 const (
 	monsterMaxHP       = uint16(200)
-	monsterATK         = uint16(30)
+	monsterATK         = uint16(200)
 	monsterAttackRange = float32(2.0)  // enter Attack when closer than this
-	aggroDropRange     = float32(18.0) // drop aggro when farther than this
-	attackCooldown     = float32(1.5)  // seconds between melee swings
+	aggroDropRange     = float32(18.0) // drop unprovoked aggro when farther than this
+	attackCooldown     = float32(1.0)  // seconds between melee swings
 	wanderRadius       = float32(6.0)
 	wanderMinCD        = float32(2.0)
 	wanderMaxCD        = float32(5.0)
@@ -51,6 +51,9 @@ const (
 	monsterChaseSpeed  = float32(5.0)
 	deathDisplayTime   = float32(2.0)  // seconds corpse stays visible
 	respawnDelay       = float32(10.0) // seconds from death to respawn
+
+	// MonsterExpReward is the EXP awarded to the player who deals the killing blow.
+	MonsterExpReward = 100
 )
 
 // ── Singleton state instances (Flyweight) ─────────────────────────────────────
@@ -104,6 +107,14 @@ type Monster struct {
 
 	// TargetID: player being chased/attacked; 0 means no aggro.
 	TargetID uint32
+
+	// LastHitPlayerID is the ID of the player who dealt the most recent damage.
+	// When the monster dies, this player receives the EXP reward.
+	LastHitPlayerID uint32
+
+	// provoked = true when the monster was attacked by a player.
+	// Provoked monsters ignore aggroDropRange and chase until target leaves the room.
+	provoked bool
 
 	homeX, homeY float32 // spawn/wander anchor point
 
@@ -163,23 +174,49 @@ func (m *Monster) Deactivate() {
 }
 
 // SetAggro transitions to ChaseState targeting playerID.
-func (m *Monster) SetAggro(playerID uint32) {
+// When called from TakeDamage (provoked=true), the monster ignores aggroDropRange
+// and chases regardless of distance until the target leaves the room.
+func (m *Monster) SetAggro(playerID uint32, provoked bool) {
 	if m.StateByte() == StateDead {
 		return
 	}
 	m.TargetID = playerID
+	if provoked {
+		m.provoked = true
+	}
 	m.transitionTo(sharedChase)
+}
+
+// LoseAggro clears the target and transitions directly to IdleState.
+// Called when a monster kills its target — it returns to passive behaviour.
+func (m *Monster) LoseAggro() {
+	if m.StateByte() == StateDead {
+		return
+	}
+	m.TargetID = 0
+	m.provoked = false
+	m.transitionTo(sharedIdle)
 }
 
 // TakeDamage reduces HP and returns (remaining, died).
 // Death automatically transitions to DeadState.
-func (m *Monster) TakeDamage(dmg uint16) (remaining uint16, died bool) {
+// attackerID is used to provoke the monster and record the killing blow.
+func (m *Monster) TakeDamage(dmg uint16, attackerID uint32) (remaining uint16, died bool) {
 	if m.StateByte() == StateDead {
 		return m.HP, false
+	}
+	// Always aggro the attacker — provoked ignores aggroDropRange
+	if attackerID != 0 && m.TargetID != attackerID {
+		m.SetAggro(attackerID, true)
+	}
+	// Track the last player to deal damage — they get the EXP reward on kill
+	if attackerID != 0 {
+		m.LastHitPlayerID = attackerID
 	}
 	if dmg >= m.HP {
 		m.HP = 0
 		m.TargetID = 0
+		m.provoked = false
 		m.transitionTo(sharedDead)
 		return 0, true
 	}
@@ -214,6 +251,7 @@ func (m *Monster) respawn() {
 	m.X = m.homeX
 	m.Y = m.homeY
 	m.TargetID = 0
+	m.provoked = false
 	m.attackTimer = 0
 	m.deathDisplayTimer = 0
 	m.respawnTimer = 0
@@ -309,13 +347,16 @@ func (s *chaseState) Update(m *Monster, ctx UpdateContext) bool {
 		return false
 	}
 	if !ctx.HasTarget {
+		// Target left the room — always drop aggro
 		m.TargetID = 0
+		m.provoked = false
 		m.transitionTo(sharedWander)
 		return false
 	}
 	dist := dist2D(m.X, m.Y, ctx.TargetX, ctx.TargetY)
 	switch {
-	case dist > aggroDropRange:
+	case !m.provoked && dist > aggroDropRange:
+		// Only unprovoked monsters drop aggro on distance
 		m.TargetID = 0
 		m.transitionTo(sharedWander)
 	case dist <= monsterAttackRange:
@@ -341,13 +382,15 @@ func (s *attackState) Update(m *Monster, ctx UpdateContext) bool {
 		return false
 	}
 	if !ctx.HasTarget {
+		// Target left the room — drop aggro
 		m.TargetID = 0
+		m.provoked = false
 		m.transitionTo(sharedWander)
 		return false
 	}
 	dist := dist2D(m.X, m.Y, ctx.TargetX, ctx.TargetY)
 	switch {
-	case dist > aggroDropRange:
+	case !m.provoked && dist > aggroDropRange:
 		m.TargetID = 0
 		m.transitionTo(sharedWander)
 		return false

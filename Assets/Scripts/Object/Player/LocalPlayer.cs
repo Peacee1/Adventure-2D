@@ -530,6 +530,10 @@ public class LocalPlayer : MonoBehaviour, IHumanController
             _serverPosition  = serverPos;
             _serverDirection = new Vector2(snap.DirX, snap.DirY);
             _serverState     = snap.State;
+
+            // isDead is driven purely by the server-authoritative state.
+            // State byte 5 = Dead (matches server constant StateDead).
+            isDead = (snap.State == 5);
             break;
         }
     }
@@ -537,21 +541,22 @@ public class LocalPlayer : MonoBehaviour, IHumanController
     private void OnDieEvent(DieEventPacket die)
     {
         if (die.PlayerID != playerID) return;
-        isDead = true;
-        _serverState = 4; // Dead
-        if (human != null) human.ForceState(4);
+        // isDead and _serverState are now set by OnWorldState from the server snapshot.
+        // DieEvent is kept only for the death animation trigger.
         Debug.Log($"[LocalPlayer] 💀 Died! Killer={die.KillerID}");
+        if (human != null) human.ForceState(5); // immediate visual feedback before next WorldState tick
     }
 
     private void OnRespawnAck(RespawnAckPacket ack)
     {
         if (ack.PlayerID != playerID) return;
-        isDead = false;
-        _serverState      = 0; // Idle
-        _lastAppliedState = 255; // reset sentinel to force ForceState call
+
+        // isDead and _serverState will be updated by the next OnWorldState tick.
+        // Apply position and animation immediately for responsiveness.
+        _lastAppliedState = 255; // force next ForceState call
         _serverPosition   = new Vector3(ack.X, ack.Y, 0f);
         transform.position = _serverPosition;
-        if (human != null) human.ForceState(0);
+        if (human != null) human.ForceState(0); // visual: back to Idle
         Debug.Log($"[LocalPlayer] 🔄 Respawned at ({ack.X:F1},{ack.Y:F1}) HP={ack.HP}");
     }
 

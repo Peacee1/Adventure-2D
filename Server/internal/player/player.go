@@ -2,6 +2,7 @@
 package player
 
 import (
+	"math/rand"
 	"net"
 	"sync"
 
@@ -35,6 +36,7 @@ const (
 // Stats chứa combat stats của player, đọc từ client hoặc DB.
 type Stats struct {
 	MaxHP       uint16
+	MaxMP       uint16  // maximum mana/magic points
 	ATKPhysical uint16
 	ATKMagic    uint16
 	DEFPhysical uint16
@@ -42,24 +44,35 @@ type Stats struct {
 	AttackRange float32
 	MoveSpeed   float32
 	AttackSpeed float32 // seconds per attack animation (1.0 = 1 attack/sec)
+	CritRate    float32 // 0.0–1.0: probability of dealing 2× damage on a normal attack
+	LifeSteal   float32 // 0.0–1.0: fraction of damage dealt restored as HP
 }
 
-// DefaultStats trả về stats cơ bản theo job class.
+// DefaultStats returns the base stats for a given job class.
 func DefaultStats(job JobClass) Stats {
 	switch job {
 	case JobArcher:
-		return Stats{MaxHP: 800, ATKPhysical: 80, ATKMagic: 10, DEFPhysical: 30, DEFMagic: 20, AttackRange: 22.5, MoveSpeed: 10, AttackSpeed: 1.0}
+		return Stats{MaxHP: 800, MaxMP: 200, ATKPhysical: 80, ATKMagic: 10, DEFPhysical: 30, DEFMagic: 20, AttackRange: 22.5, MoveSpeed: 10, AttackSpeed: 1.0, CritRate: 0, LifeSteal: 0}
 	case JobMage:
-		return Stats{MaxHP: 650, ATKPhysical: 15, ATKMagic: 120, DEFPhysical: 20, DEFMagic: 50, AttackRange: 8, MoveSpeed: 10, AttackSpeed: 1.0}
+		return Stats{MaxHP: 650, MaxMP: 500, ATKPhysical: 15, ATKMagic: 120, DEFPhysical: 20, DEFMagic: 50, AttackRange: 8, MoveSpeed: 10, AttackSpeed: 1.0, CritRate: 0, LifeSteal: 0}
 	case JobHealer:
-		return Stats{MaxHP: 750, ATKPhysical: 20, ATKMagic: 55, DEFPhysical: 25, DEFMagic: 60, AttackRange: 8, MoveSpeed: 10, AttackSpeed: 1.0}
+		return Stats{MaxHP: 750, MaxMP: 400, ATKPhysical: 20, ATKMagic: 55, DEFPhysical: 25, DEFMagic: 60, AttackRange: 8, MoveSpeed: 10, AttackSpeed: 1.0, CritRate: 0, LifeSteal: 0}
 	case JobAssassin:
-		return Stats{MaxHP: 700, ATKPhysical: 110, ATKMagic: 20, DEFPhysical: 25, DEFMagic: 15, AttackRange: 1.5, MoveSpeed: 10, AttackSpeed: 0.7}
+		return Stats{MaxHP: 700, MaxMP: 150, ATKPhysical: 110, ATKMagic: 20, DEFPhysical: 25, DEFMagic: 15, AttackRange: 1.5, MoveSpeed: 10, AttackSpeed: 0.7, CritRate: 0, LifeSteal: 0}
 	case JobTank:
-		return Stats{MaxHP: 1500, ATKPhysical: 50, ATKMagic: 10, DEFPhysical: 100, DEFMagic: 80, AttackRange: 2, MoveSpeed: 10, AttackSpeed: 1.5}
+		return Stats{MaxHP: 1500, MaxMP: 150, ATKPhysical: 50, ATKMagic: 10, DEFPhysical: 100, DEFMagic: 80, AttackRange: 2, MoveSpeed: 10, AttackSpeed: 1.5, CritRate: 0, LifeSteal: 0}
 	default: // Warrior
-		return Stats{MaxHP: 1100, ATKPhysical: 90, ATKMagic: 10, DEFPhysical: 60, DEFMagic: 25, AttackRange: 2, MoveSpeed: 10, AttackSpeed: 1.0}
+		return Stats{MaxHP: 1100, MaxMP: 150, ATKPhysical: 90, ATKMagic: 10, DEFPhysical: 60, DEFMagic: 25, AttackRange: 2, MoveSpeed: 10, AttackSpeed: 1.0, CritRate: 0, LifeSteal: 0}
 	}
+}
+
+// ComputeAttackDamage calculates final damage with a critical hit check.
+// Returns (finalDamage, isCrit). A crit deals 2× base damage.
+func ComputeAttackDamage(base uint16, critRate float32) (uint16, bool) {
+	if critRate > 0 && rand.Float32() < critRate {
+		return base * 2, true
+	}
+	return base, false
 }
 
 // Player đại diện cho một nhân vật trong game.
@@ -81,8 +94,9 @@ type Player struct {
 	Waypoints   []mathutil.Vector2
 	WaypointIdx int
 
-	// HP hiện tại
+	// HP and MP (current values)
 	HP uint16
+	MP uint16
 
 	// Trạng thái animation — driven by PlayerStateMachine
 	State State
@@ -106,9 +120,10 @@ type Player struct {
 	// DashEndState reads this instead of the constant to stay in sync with the animation.
 	DashEndLagDynamic float32
 
-	// Level và EXP
-	Level int
-	Exp   int
+	// Level, EXP and SkillPoints
+	Level       int
+	Exp         int
+	SkillPoints int // earned 1 point per old level on each level-up (level 8→9 = +8 points)
 
 	// Map cuối cùng player đứng (tên Scene Unity)
 	MapName string
@@ -309,37 +324,56 @@ func (p *Player) Snapshot() (id uint32, pos mathutil.Vector2, dir mathutil.Vecto
 	return p.ID, p.Position, p.Direction, p.HP, p.State
 }
 
-// SaveData chứa toàn bộ dữ liệu cần thiết để ghi vào DB khi logout.
+// SaveData contains all data needed to persist a player to the DB on logout.
 type SaveData struct {
 	ID          uint32
 	Position    mathutil.Vector2
 	HP          uint16
+	MP          uint16
 	JobClass    JobClass
 	Stats       Stats
 	Level       int
 	Exp         int
+	SkillPoints int
 	MapName     string
 	Inventory   string
 	Buffs       string
 	Skills      string
 }
 
-// GetSaveData thu thập toàn bộ dữ liệu cần lưu DB (thread-safe).
+// ApplyLifeSteal restores HP to the player based on a fraction of damage dealt.
+// Caller MUST hold the player lock before calling this method.
+func (p *Player) ApplyLifeSteal(damageDealt uint16) {
+	if p.Stats.LifeSteal <= 0 || damageDealt == 0 {
+		return
+	}
+	heal := uint16(float32(damageDealt) * p.Stats.LifeSteal)
+	if heal == 0 {
+		return
+	}
+	p.HP += heal
+	if p.HP > p.Stats.MaxHP {
+		p.HP = p.Stats.MaxHP
+	}
+}
+
 func (p *Player) GetSaveData() SaveData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return SaveData{
-		ID:        p.ID,
-		Position:  p.Position,
-		HP:        p.HP,
-		JobClass:  p.JobClass,
-		Stats:     p.Stats,
-		Level:     p.Level,
-		Exp:       p.Exp,
-		MapName:   p.MapName,
-		Inventory: p.Inventory,
-		Buffs:     p.Buffs,
-		Skills:    p.Skills,
+		ID:          p.ID,
+		Position:    p.Position,
+		HP:          p.HP,
+		MP:          p.MP,
+		JobClass:    p.JobClass,
+		Stats:       p.Stats,
+		Level:       p.Level,
+		Exp:         p.Exp,
+		SkillPoints: p.SkillPoints,
+		MapName:     p.MapName,
+		Inventory:   p.Inventory,
+		Buffs:       p.Buffs,
+		Skills:      p.Skills,
 	}
 }
 
@@ -393,4 +427,31 @@ func (p *Player) StartDash(dir mathutil.Vector2) {
 	}
 	p.Direction = dir
 	p.SM.TransitionTo(StateDash, p)
+}
+
+// ── EXP / Level ───────────────────────────────────────────────────────────────
+
+// ExpForLevel returns the EXP required to advance from level to level+1.
+// Formula: level * 1000 — must match client PlayerStatusUI.ComputeMaxExp.
+func ExpForLevel(level int) int {
+	if level < 1 {
+		return 1000
+	}
+	return level * 1000
+}
+
+// GainExp adds amount to the player's EXP and levels up as many times as needed.
+// On each level-up from level N to N+1, the player gains N skill points.
+// Returns (leveledUp, newLevel, newExp, skillPointsGained).
+// Caller MUST hold the player lock before calling this method.
+func (p *Player) GainExp(amount int) (leveledUp bool, newLevel int, newExp int, skillPointsGained int) {
+	p.Exp += amount
+	for p.Exp >= ExpForLevel(p.Level) {
+		p.Exp -= ExpForLevel(p.Level)
+		skillPointsGained += p.Level // level N→N+1 awards N skill points
+		p.SkillPoints += p.Level
+		p.Level++
+		leveledUp = true
+	}
+	return leveledUp, p.Level, p.Exp, skillPointsGained
 }

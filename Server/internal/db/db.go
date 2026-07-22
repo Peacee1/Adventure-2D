@@ -101,6 +101,7 @@ func (d *Database) migrate() error {
 		exp INTEGER DEFAULT 0,
 		map_name TEXT DEFAULT 'Map1',
 		max_hp INTEGER DEFAULT 800,
+		max_mp INTEGER DEFAULT 200,
 		atk_physical INTEGER DEFAULT 80,
 		atk_magic INTEGER DEFAULT 10,
 		def_physical INTEGER DEFAULT 30,
@@ -108,6 +109,9 @@ func (d *Database) migrate() error {
 		attack_range REAL DEFAULT 15.0,
 		move_speed REAL DEFAULT 10.0,
 		attack_speed REAL DEFAULT 1.0,
+		skill_points INTEGER DEFAULT 0,
+		crit_rate REAL DEFAULT 0.0,
+		life_steal REAL DEFAULT 0.0,
 		inventory TEXT DEFAULT '',
 		buffs TEXT DEFAULT '',
 		skills TEXT DEFAULT '',
@@ -134,6 +138,7 @@ func (d *Database) migrate() error {
 		`ALTER TABLE players ADD COLUMN map_name TEXT DEFAULT 'Map1'`,
 		`ALTER TABLE accounts ADD COLUMN device_id TEXT`,
 		`ALTER TABLE players ADD COLUMN max_hp INTEGER DEFAULT 800`,
+		`ALTER TABLE players ADD COLUMN max_mp INTEGER DEFAULT 200`,
 		`ALTER TABLE players ADD COLUMN atk_physical INTEGER DEFAULT 80`,
 		`ALTER TABLE players ADD COLUMN atk_magic INTEGER DEFAULT 10`,
 		`ALTER TABLE players ADD COLUMN def_physical INTEGER DEFAULT 30`,
@@ -141,6 +146,9 @@ func (d *Database) migrate() error {
 		`ALTER TABLE players ADD COLUMN attack_range REAL DEFAULT 15.0`,
 		`ALTER TABLE players ADD COLUMN move_speed REAL DEFAULT 10.0`,
 		`ALTER TABLE players ADD COLUMN attack_speed REAL DEFAULT 1.0`,
+		`ALTER TABLE players ADD COLUMN skill_points INTEGER DEFAULT 0`,
+		`ALTER TABLE players ADD COLUMN crit_rate REAL DEFAULT 0.0`,
+		`ALTER TABLE players ADD COLUMN life_steal REAL DEFAULT 0.0`,
 		`ALTER TABLE players ADD COLUMN inventory TEXT DEFAULT ''`,
 		`ALTER TABLE players ADD COLUMN buffs TEXT DEFAULT ''`,
 		`ALTER TABLE players ADD COLUMN skills TEXT DEFAULT ''`,
@@ -263,19 +271,24 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 
 	var rec player.PlayerRecord
 	var jobInt int
-	var hpInt, maxHPInt, atkPhy, atkMag, defPhy, defMag int
+	var hpInt, maxHPInt, maxMPInt, atkPhy, atkMag, defPhy, defMag, skillPts int
 
 	query := `SELECT id, account_id, slot, username, job_class, x, y, hp, level, exp, map_name,
-	                 max_hp, atk_physical, atk_magic, def_physical, def_magic,
-	                 attack_range, move_speed, attack_speed, inventory, buffs, skills,
+	                 max_hp, max_mp, atk_physical, atk_magic, def_physical, def_magic,
+	                 attack_range, move_speed, attack_speed,
+	                 COALESCE(skill_points, 0),
+	                 COALESCE(crit_rate, 0.0), COALESCE(life_steal, 0.0),
+	                 inventory, buffs, skills,
 	                 COALESCE(created_at, CURRENT_TIMESTAMP)
 	          FROM players WHERE account_id = ? AND slot = ?`
 	err := d.db.QueryRow(query, accountID, slot).Scan(
 		&rec.ID, &rec.AccountID, &rec.Slot, &rec.Username,
 		&jobInt, &rec.X, &rec.Y, &hpInt,
 		&rec.Level, &rec.Exp, &rec.MapName,
-		&maxHPInt, &atkPhy, &atkMag, &defPhy, &defMag,
+		&maxHPInt, &maxMPInt, &atkPhy, &atkMag, &defPhy, &defMag,
 		&rec.AttackRange, &rec.MoveSpeed, &rec.AttackSpeed,
+		&skillPts,
+		&rec.CritRate, &rec.LifeSteal,
 		&rec.Inventory, &rec.Buffs, &rec.Skills,
 		&rec.CreatedAt,
 	)
@@ -287,27 +300,29 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 
 		insertQuery := `INSERT INTO players
 		                (account_id, slot, username, job_class, x, y, hp, level, exp, map_name,
-		                 max_hp, atk_physical, atk_magic, def_physical, def_magic,
-		                 attack_range, move_speed, attack_speed, inventory, buffs, skills)
+		                 max_hp, max_mp, atk_physical, atk_magic, def_physical, def_magic,
+		                 attack_range, move_speed, attack_speed,
+		                 skill_points, crit_rate, life_steal,
+		                 inventory, buffs, skills)
 		                VALUES (?, ?, ?, 1, 0.0, 0.0, ?, 1, 0, 'Map0',
-		                        ?, ?, ?, ?, ?, ?, ?, ?, '', '', '')`
-		res, err := d.db.Exec(insertQuery, accountID, slot, charName,
-			int(defStats.MaxHP),
-			int(defStats.MaxHP), int(defStats.ATKPhysical), int(defStats.ATKMagic),
-			int(defStats.DEFPhysical), int(defStats.DEFMagic),
-			defStats.AttackRange, defStats.MoveSpeed, defStats.AttackSpeed,
-		)
+		                        ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		                        0, 0.0, 0.0,
+		                        '', '', '')`
+		execInsert := func(name string) (sql.Result, error) {
+			return d.db.Exec(insertQuery, accountID, slot, name,
+				int(defStats.MaxHP),
+				int(defStats.MaxHP), int(defStats.MaxMP),
+				int(defStats.ATKPhysical), int(defStats.ATKMagic),
+				int(defStats.DEFPhysical), int(defStats.DEFMagic),
+				defStats.AttackRange, defStats.MoveSpeed, defStats.AttackSpeed,
+			)
+		}
+		res, err := execInsert(charName)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				// Fallback: username is already taken by another account — append accountID to disambiguate.
 				charName = fmt.Sprintf("%s_%d", username, accountID)
 				log.Printf("[DB] GetOrCreatePlayer: charName conflict, retrying with name=%q", charName)
-				res, err = d.db.Exec(insertQuery, accountID, slot, charName,
-					int(defStats.MaxHP),
-					int(defStats.MaxHP), int(defStats.ATKPhysical), int(defStats.ATKMagic),
-					int(defStats.DEFPhysical), int(defStats.DEFMagic),
-					defStats.AttackRange, defStats.MoveSpeed, defStats.AttackSpeed,
-				)
+				res, err = execInsert(charName)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("create character query error: %w", err)
@@ -333,6 +348,7 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 			Exp:         0,
 			MapName:     "Map0",
 			MaxHP:       defStats.MaxHP,
+			MaxMP:       defStats.MaxMP,
 			ATKPhysical: defStats.ATKPhysical,
 			ATKMagic:    defStats.ATKMagic,
 			DEFPhysical: defStats.DEFPhysical,
@@ -354,10 +370,12 @@ func (d *Database) GetOrCreatePlayer(accountID uint32, username string, slot uin
 	rec.JobClass    = player.JobClass(jobInt)
 	rec.HP          = uint16(hpInt)
 	rec.MaxHP       = uint16(maxHPInt)
+	rec.MaxMP       = uint16(maxMPInt)
 	rec.ATKPhysical = uint16(atkPhy)
 	rec.ATKMagic    = uint16(atkMag)
 	rec.DEFPhysical = uint16(defPhy)
 	rec.DEFMagic    = uint16(defMag)
+	rec.SkillPoints = skillPts
 
 	// If DB record has no stats (old DB, zeroed row), fall back to DefaultStats per job
 	if rec.MaxHP == 0 {
@@ -424,16 +442,20 @@ func (d *Database) Save(p *player.Player) error {
 
 	query := `UPDATE players SET
 			job_class=?, x=?, y=?, hp=?, level=?, exp=?, map_name=?,
-			max_hp=?, atk_physical=?, atk_magic=?, def_physical=?, def_magic=?,
-			attack_range=?, move_speed=?,
+			max_hp=?, max_mp=?, atk_physical=?, atk_magic=?, def_physical=?, def_magic=?,
+			attack_range=?, move_speed=?, skill_points=?,
+			crit_rate=?, life_steal=?,
 			inventory=?, buffs=?, skills=?
 		WHERE id=?`
 	result, err := d.db.Exec(query,
 		int(data.JobClass), data.Position.X, data.Position.Y, int(data.HP),
 		data.Level, data.Exp, data.MapName,
-		int(data.Stats.MaxHP), int(data.Stats.ATKPhysical), int(data.Stats.ATKMagic),
+		int(data.Stats.MaxHP), int(data.Stats.MaxMP),
+		int(data.Stats.ATKPhysical), int(data.Stats.ATKMagic),
 		int(data.Stats.DEFPhysical), int(data.Stats.DEFMagic),
 		data.Stats.AttackRange, data.Stats.MoveSpeed,
+		data.SkillPoints,
+		data.Stats.CritRate, data.Stats.LifeSteal,
 		data.Inventory, data.Buffs, data.Skills,
 		data.ID)
 	if err != nil {

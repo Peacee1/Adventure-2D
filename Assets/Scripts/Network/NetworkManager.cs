@@ -53,6 +53,8 @@ public class NetworkManager : MonoBehaviour
     /// <summary>Fired when the server returns the 3-slot character list in response to GetCharListReq.</summary>
     public event Action<CharacterData[]>          OnCharacterListReceived;
     public event Action<PacketDecoder.HitboxConfigPacket> OnHitboxConfigReceived;
+    public event Action<PacketDecoder.ExpGainPacket>      OnExpGain;
+    public event Action<PacketDecoder.LevelUpPacket>      OnLevelUp;
 
     // ─── State ────────────────────────────────────────────────────────────────
 
@@ -380,7 +382,15 @@ public class NetworkManager : MonoBehaviour
                                 hp:           loginAck.HP,
                                 maxHP:        loginAck.MaxHP,
                                 x:            loginAck.X,
-                                y:            loginAck.Y
+                                y:            loginAck.Y,
+                                maxMP:        loginAck.MaxMP,
+                                atkPhy:       loginAck.ATKPhysical,
+                                atkMag:       loginAck.ATKMagic,
+                                defPhy:       loginAck.DEFPhysical,
+                                defMag:       loginAck.DEFMagic,
+                                skillPoints:  (int)loginAck.SkillPoints,
+                                critRate:     loginAck.CritRate,
+                                lifeSteal:    loginAck.LifeSteal
                             );
                             GameSession.Instance.SetLevel(loginAck.Level, (int)loginAck.Exp);
                             GameSession.Instance.SetMapName(loginAck.MapName);
@@ -483,6 +493,28 @@ public class NetworkManager : MonoBehaviour
                     ServerHitboxHeight = hbConfig.Height;
                     Debug.Log($"[Network] HitboxConfigAck received: shape={hbConfig.Shape} radius={hbConfig.Radius}");
                     OnHitboxConfigReceived?.Invoke(hbConfig);
+                });
+                break;
+
+            case PacketType.ExpGain:
+                var expGain = PacketDecoder.DecodeExpGain(payload);
+                Enqueue(() =>
+                {
+                    GameSession.Instance?.SetExpAndLevel((int)expGain.NewLevel, (int)expGain.NewExp);
+                    OnExpGain?.Invoke(expGain);
+                    PlayerStatusUI.Instance?.Refresh();
+                    StatsManager.Instance?.Refresh();
+                });
+                break;
+
+            case PacketType.LevelUp:
+                var lvlUp = PacketDecoder.DecodeLevelUp(payload);
+                Enqueue(() =>
+                {
+                    GameSession.Instance?.SetExpAndLevel((int)lvlUp.NewLevel, (int)lvlUp.NewExp, (int)lvlUp.NewSkillPoints);
+                    OnLevelUp?.Invoke(lvlUp);
+                    PlayerStatusUI.Instance?.Refresh();
+                    StatsManager.Instance?.Refresh();
                 });
                 break;
         }

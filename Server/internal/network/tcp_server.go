@@ -16,13 +16,14 @@ type TCPServer struct {
 	roomManager *room.Manager
 	dbRepo      player.Repository
 
-	loginHandler         *handler.LoginHandler
-	registerHandler      *handler.RegisterHandler
-	roomHandler          *handler.RoomHandler
-	attackHandler        *handler.AttackHandler
-	movePathHandler      *handler.MovePathHandler
-	characterListHandler *handler.CharacterListHandler
-	dashHandler          *handler.DashHandler
+	loginHandler            *handler.LoginHandler
+	registerHandler         *handler.RegisterHandler
+	roomHandler             *handler.RoomHandler
+	attackHandler           *handler.AttackHandler
+	movePathHandler         *handler.MovePathHandler
+	characterListHandler    *handler.CharacterListHandler
+	dashHandler             *handler.DashHandler
+	spendSkillPointHandler  *handler.SpendSkillPointHandler
 }
 
 // NewTCPServer tạo TCP server.
@@ -32,13 +33,14 @@ func NewTCPServer(addr string, rm *room.Manager, repo player.Repository) *TCPSer
 		addr:                 addr,
 		roomManager:          rm,
 		dbRepo:               repo,
-		loginHandler:         handler.NewLoginHandler(rm, repo),
-		registerHandler:      handler.NewRegisterHandler(repo),
-		roomHandler:          handler.NewRoomHandler(rm),
-		attackHandler:        handler.NewAttackHandler(rm),
-		movePathHandler:      handler.NewMovePathHandler(rm),
-		characterListHandler: handler.NewCharacterListHandler(repo),
-		dashHandler:          handler.NewDashHandler(rm),
+		loginHandler:           handler.NewLoginHandler(rm, repo),
+		registerHandler:        handler.NewRegisterHandler(repo),
+		roomHandler:            handler.NewRoomHandler(rm),
+		attackHandler:          handler.NewAttackHandler(rm),
+		movePathHandler:        handler.NewMovePathHandler(rm),
+		characterListHandler:   handler.NewCharacterListHandler(repo),
+		dashHandler:            handler.NewDashHandler(rm),
+		spendSkillPointHandler: handler.NewSpendSkillPointHandler(repo),
 	}
 }
 
@@ -133,6 +135,9 @@ func (s *TCPServer) dispatch(pTypeRaw uint16, payload []byte, sess *player.Sessi
 		}
 		sess.Send(packet.EncodeHitboxConfigAck(ack))
 		log.Printf("[TCP] Sent hitbox config to player %d (shape=Box, size=%.2fx%.2f)", sess.Player.ID, room.HitboxWidth, room.HitboxHeight)
+
+	case packet.TypeSpendSkillPointReq:
+		s.spendSkillPointHandler.Handle(payload, sess)
 
 	default:
 		log.Printf("[TCP] Unknown packet type=0x%04X from player %d (%s) — ignoring",

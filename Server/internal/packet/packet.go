@@ -41,6 +41,14 @@ const (
 	TypeHitboxConfigReq   PacketType = 0x003e // C→S  Request hitbox shape and size
 	TypeHitboxConfigAck   PacketType = 0x003f // S→C  Response hitbox config
 
+	// ── EXP / Level ───────────────────────────────────────────────────────────
+	TypeExpGain  PacketType = 0x0040 // S→C  EXP gained (sent only to the killer)
+	TypeLevelUp  PacketType = 0x0041 // S→C  Level-up notification (sent only to the killer)
+
+	// ── Skill Point spending ───────────────────────────────────────────────────
+	TypeSpendSkillPointReq PacketType = 0x0042 // C→S  Spend 1 skill point on a stat
+	TypeSpendSkillPointAck PacketType = 0x0043 // S→C  Result of spending a skill point
+
 	// ── System ────────────────────────────────────────────────────────────────
 	TypePing PacketType = 0xFF00 // C↔S  Ping/Pong
 	TypePong PacketType = 0xFF01
@@ -48,3 +56,52 @@ const (
 
 // HeaderSize is the fixed header size for every packet.
 const HeaderSize = 4
+
+// ── EXP / Level packet structs ────────────────────────────────────────────────
+
+// ExpGainPacket is sent to a player when they kill a monster.
+type ExpGainPacket struct {
+	PlayerID  uint32
+	ExpGained uint32 // how much EXP was awarded this kill
+	NewExp    uint32 // current EXP after gain (within the current level)
+	NewLevel  uint32 // current level (unchanged unless level-up follows)
+}
+
+// LevelUpPacket is sent immediately after ExpGainPacket when a level-up occurs.
+type LevelUpPacket struct {
+	PlayerID       uint32
+	NewLevel       uint32
+	NewExp         uint32 // EXP after level-up remainder carry-over
+	NewSkillPoints uint32 // total accumulated skill points after this level-up
+}
+
+// ── Skill Point packet structs ────────────────────────────────────────────────
+
+// StatUpgradeType identifies which stat to upgrade with a skill point.
+type StatUpgradeType uint8
+
+const (
+	UpgradeHP         StatUpgradeType = 0 // +100 MaxHP
+	UpgradeMP         StatUpgradeType = 1 // +100 MaxMP
+	UpgradeATKPhysical StatUpgradeType = 2 // +10 ATK Physical
+	UpgradeATKMagic   StatUpgradeType = 3 // +10 ATK Magic
+	UpgradeDEF        StatUpgradeType = 4 // +10 DEF Physical AND +10 DEF Magic
+)
+
+// SpendSkillPointReqPacket is sent by the client to spend 1 skill point.
+type SpendSkillPointReqPacket struct {
+	StatType StatUpgradeType // which stat to upgrade
+}
+
+// SpendSkillPointAckPacket is the server response after spending a skill point.
+type SpendSkillPointAckPacket struct {
+	Success        bool   // true = upgrade applied
+	FailReason     uint8  // 0 = ok, 1 = not enough SP, 2 = invalid type
+	NewSkillPoints uint32
+	NewMaxHP       uint16
+	NewMaxMP       uint16
+	NewATKPhysical uint16
+	NewATKMagic    uint16
+	NewDEFPhysical uint16
+	NewDEFMagic    uint16
+}

@@ -21,10 +21,25 @@ public class GameSession : MonoBehaviour
     public float    SpawnX    { get; private set; }
     public float    SpawnY    { get; private set; }
 
+    // ─── Combat Stats (from server) ───────────────────────────────────────────
+
+    public ushort   MaxMP       { get; private set; }
+    public ushort   ATKPhysical { get; private set; }
+    public ushort   ATKMagic    { get; private set; }
+    public ushort   DEFPhysical { get; private set; }
+    public ushort   DEFMagic    { get; private set; }
+    public float    CritRate    { get; private set; } // 0.0–1.0
+    public float    LifeSteal   { get; private set; } // 0.0–1.0
+
     // ─── Level ────────────────────────────────────────────────────────────────
 
-    public int      Level     { get; private set; } = 1;
-    public int      CurrentExp{ get; private set; } = 0;
+    public int      Level       { get; private set; } = 1;
+    public int      CurrentExp  { get; private set; } = 0;
+
+    // ─── Skill Points ─────────────────────────────────────────────────────────
+    // Gained when leveling up: level N→N+1 awards N skill points.
+
+    public int      SkillPoints { get; private set; } = 0;
 
     // ─── Map ──────────────────────────────────────────────────────────────────
 
@@ -49,18 +64,42 @@ public class GameSession : MonoBehaviour
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
-    /// <summary>Gọi từ MenuScene sau khi nhận LoginAck thành công.</summary>
-    public void SetPlayerInfo(uint playerID, byte jobClassByte, string username, ushort hp, ushort maxHP, float x, float y)
+    /// <summary>Called from MenuScene after successful LoginAck.</summary>
+    public void SetPlayerInfo(uint playerID, byte jobClassByte, string username, ushort hp, ushort maxHP, float x, float y,
+        ushort maxMP = 0, ushort atkPhy = 0, ushort atkMag = 0, ushort defPhy = 0, ushort defMag = 0,
+        int skillPoints = 0, float critRate = 0f, float lifeSteal = 0f)
     {
-        PlayerID = playerID;
-        JobClass = ByteToJobClass(jobClassByte);
-        Username = username;
-        HP       = hp;
-        MaxHP    = maxHP > 0 ? maxHP : hp;
-        SpawnX   = x;
-        SpawnY   = y;
+        PlayerID    = playerID;
+        JobClass    = ByteToJobClass(jobClassByte);
+        Username    = username;
+        HP          = hp;
+        MaxHP       = maxHP > 0 ? maxHP : hp;
+        SpawnX      = x;
+        SpawnY      = y;
+        MaxMP       = maxMP;
+        ATKPhysical = atkPhy;
+        ATKMagic    = atkMag;
+        DEFPhysical = defPhy;
+        DEFMagic    = defMag;
+        SkillPoints = skillPoints;
+        CritRate    = critRate;
+        LifeSteal   = lifeSteal;
 
-        Debug.Log($"[GameSession] SetPlayerInfo: ID={playerID} Job={JobClass} User={username} HP={hp}/{MaxHP} Pos=({x},{y})");
+        Debug.Log($"[GameSession] SetPlayerInfo: ID={playerID} Job={JobClass} User={username} HP={hp}/{MaxHP} MP={MaxMP} SP={SkillPoints}");
+    }
+
+    /// <summary>Updates combat stats after SpendSkillPointAck.</summary>
+    public void SetCombatStats(ushort maxHP, ushort maxMP, ushort atkPhy, ushort atkMag,
+                               ushort defPhy, ushort defMag, int skillPoints)
+    {
+        MaxHP       = maxHP;
+        MaxMP       = maxMP;
+        ATKPhysical = atkPhy;
+        ATKMagic    = atkMag;
+        DEFPhysical = defPhy;
+        DEFMagic    = defMag;
+        SkillPoints = skillPoints;
+        Debug.Log($"[GameSession] SetCombatStats: HP={maxHP} MP={maxMP} ATKPhy={atkPhy} ATKMag={atkMag} DEFPhy={defPhy} DEFMag={defMag} SP={skillPoints}");
     }
 
     /// <summary>Gọi khi JoinRoom thành công. Lưu danh sách players hiện có để Bootstrap spawn.</summary>
@@ -71,12 +110,28 @@ public class GameSession : MonoBehaviour
         Debug.Log($"[GameSession] SetRoom: {roomID} (existing={ExistingPlayersAtJoin.Count})");
     }
 
-    /// <summary>Gọi từ LevelSystem khi level/EXP thay đổi.</summary>
+    /// <summary>Called from NetworkManager when ExpGain/LevelUp packet arrives.</summary>
+    public void SetExpAndLevel(int level, int exp, int skillPoints = -1)
+    {
+        Level      = level;
+        CurrentExp = exp;
+        if (skillPoints >= 0) SkillPoints = skillPoints;
+        Debug.Log($"[GameSession] Level={level} EXP={exp} SP={SkillPoints}");
+    }
+
+    /// <summary>Called from LevelSystem when level/EXP changes (legacy).</summary>
     public void SetLevel(int level, int exp)
     {
         Level      = level;
         CurrentExp = exp;
         Debug.Log($"[GameSession] SetLevel: {level} EXP={exp}");
+    }
+
+    /// <summary>Called from LevelSystem when only SkillPoints changes.</summary>
+    public void SetSkillPoints(int sp)
+    {
+        SkillPoints = sp;
+        Debug.Log($"[GameSession] SkillPoints={sp}");
     }
 
     /// <summary>Gọi sau LoginAck để lưu tên scene cần load.</summary>

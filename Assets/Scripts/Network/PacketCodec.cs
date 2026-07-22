@@ -203,28 +203,53 @@ public static class PacketDecoder
         public float  X;
         public float  Y;
         public string MapName;
-        public string CharName; // Character's database name (e.g. peacee2_slot1)
+        public string CharName;
         public string Message;
+
+        // ── Combat stats for StatsManager ────────────────────────
+        public ushort MaxMP;
+        public ushort ATKPhysical;
+        public ushort ATKMagic;
+        public ushort DEFPhysical;
+        public ushort DEFMagic;
+        public uint   SkillPoints;
+        public float  CritRate;  // 0.0–1.0
+        public float  LifeSteal; // 0.0–1.0
     }
 
     public static LoginAckData DecodeLoginAck(byte[] payload)
     {
-        using var r = new BinaryReader(new MemoryStream(payload));
-        return new LoginAckData
+        using var ms = new MemoryStream(payload);
+        using var r  = new BinaryReader(ms);
+
+        var data = new LoginAckData
         {
-            Success  = r.ReadByte() != 0,
-            PlayerID = r.ReadUInt32(),
-            JobClass = r.ReadByte(),
-            Level    = r.ReadUInt16(),
-            Exp      = r.ReadUInt32(),
-            HP       = r.ReadUInt16(),
-            MaxHP    = r.ReadUInt16(),
-            X        = r.ReadSingle(),
-            Y        = r.ReadSingle(),
-            MapName  = ReadString(r),
-            CharName = ReadString(r), // Read character name
-            Message  = ReadString(r),
+            Success      = r.ReadByte() != 0,
+            PlayerID     = r.ReadUInt32(),
+            JobClass     = r.ReadByte(),
+            Level        = r.ReadUInt16(),
+            Exp          = r.ReadUInt32(),
+            HP           = r.ReadUInt16(),
+            MaxHP        = r.ReadUInt16(),
+            X            = r.ReadSingle(),
+            Y            = r.ReadSingle(),
+            MapName      = ReadString(r),
+            CharName     = ReadString(r),
+            Message      = ReadString(r),
         };
+
+        // Combat stats — only present in servers that support the extended LoginAck.
+        // Guard against end-of-stream to stay backward-compatible.
+        if (ms.Position < ms.Length) data.MaxMP       = r.ReadUInt16();
+        if (ms.Position < ms.Length) data.ATKPhysical = r.ReadUInt16();
+        if (ms.Position < ms.Length) data.ATKMagic    = r.ReadUInt16();
+        if (ms.Position < ms.Length) data.DEFPhysical = r.ReadUInt16();
+        if (ms.Position < ms.Length) data.DEFMagic    = r.ReadUInt16();
+        if (ms.Position < ms.Length) data.SkillPoints = r.ReadUInt32();
+        if (ms.Position < ms.Length) data.CritRate    = r.ReadSingle();
+        if (ms.Position < ms.Length) data.LifeSteal   = r.ReadSingle();
+
+        return data;
     }
 
     public static RegisterAckData DecodeRegisterAck(byte[] payload)
@@ -444,6 +469,48 @@ public static class PacketDecoder
             Radius = r.ReadSingle(),
             Width = r.ReadSingle(),
             Height = r.ReadSingle(),
+        };
+    }
+
+    // ── EXP / Level ───────────────────────────────────────────────────────────
+
+    public struct ExpGainPacket
+    {
+        public uint PlayerID;
+        public uint ExpGained;  // EXP awarded this kill
+        public uint NewExp;     // current EXP within the level after gain
+        public uint NewLevel;   // current level (may be same or higher if leveled up)
+    }
+
+    public static ExpGainPacket DecodeExpGain(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new ExpGainPacket
+        {
+            PlayerID  = r.ReadUInt32(),
+            ExpGained = r.ReadUInt32(),
+            NewExp    = r.ReadUInt32(),
+            NewLevel  = r.ReadUInt32(),
+        };
+    }
+
+    public struct LevelUpPacket
+    {
+        public uint PlayerID;
+        public uint NewLevel;
+        public uint NewExp;
+        public uint NewSkillPoints; // total skill points after level-up
+    }
+
+    public static LevelUpPacket DecodeLevelUp(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        return new LevelUpPacket
+        {
+            PlayerID       = r.ReadUInt32(),
+            NewLevel       = r.ReadUInt32(),
+            NewExp         = r.ReadUInt32(),
+            NewSkillPoints = r.ReadUInt32(),
         };
     }
 }

@@ -1,52 +1,405 @@
-# Project Rules — Adventure-2D
+# Unity 2D MMORPG Coding Rules
 
-## Mandatory Programming Principles: SOLID
+## General Principles
 
-All code written or modified in this project **must** strictly follow the 5 SOLID principles:
-
-### S — Single Responsibility Principle
-- Each class, script, or module must have **only one reason to change**.
-- Clear separation: game logic, UI, data, and input handling must reside in separate classes.
-- Example: `Player.cs` must not simultaneously contain movement logic, combat, inventory, and UI.
-
-### O — Open/Closed Principle
-- Classes must be **open for extension** (add new features) but **closed for modification** (don't modify already-working code).
-- Prefer **abstract classes**, **interfaces**, and **inheritance** over directly modifying base classes.
-- When adding a new JobClass or Enemy type, create a new subclass only — do not modify base logic.
-
-### L — Liskov Substitution Principle
-- Every subclass must be able to **substitute its parent class** without breaking program logic.
-- Avoid overriding methods in ways that violate the expected behavior of the parent class.
-- Subclasses may only **narrow or preserve** the pre/post-conditions of parent methods.
-
-### I — Interface Segregation Principle
-- Do not force a class to implement interfaces it does not need.
-- Split large interfaces into smaller, focused ones by responsibility.
-- Example: `IDamageable`, `IMovable`, `IAttackable` instead of one giant `ICharacter`.
-
-### D — Dependency Inversion Principle
-- High-level classes **must not depend directly** on low-level classes; both must depend on **abstractions** (interfaces/abstract classes).
-- Inject dependencies via constructor or field rather than instantiating directly inside a class.
-- Use ScriptableObject or interfaces as intermediary layers where appropriate in Unity.
+- Always follow SOLID principles.
+- Keep code simple (KISS).
+- Avoid code duplication (DRY).
+- Prefer composition over inheritance.
+- Never create God Classes.
+- Write readable code before clever code.
 
 ---
 
-## Additional Rules for Unity C#
+## Naming
 
-- Use **ScriptableObject** for static data (stats, item config, job class info) to decouple data from logic.
-- Avoid overusing **Singleton**; only use it when a true global instance is required.
-- Every `MonoBehaviour` should contain only Unity lifecycle logic (`Awake`, `Start`, `Update`); push business logic into plain C# classes.
-- Name classes, methods, and variables clearly to reflect their responsibilities.
+Classes:
+- PascalCase
+- Example:
+    PlayerController
+    InventoryManager
+    NetworkClient
+
+Interfaces:
+- Prefix with I
+- Example:
+    IMovement
+    IDamageable
+
+Methods:
+- PascalCase
+- Use verbs
+- Example:
+    Move()
+    Attack()
+    SendPacket()
+
+Private fields:
+- _camelCase
+- Example:
+    _health
+    _rigidbody
+
+Public fields:
+- Avoid public fields.
+- Use properties when possible.
+
+Constants:
+- PascalCase or ALL_CAPS
+- Example:
+    MaxLevel
+    MAX_PACKET_SIZE
 
 ---
 
-## Language Rule
+## Folder Structure
 
-**All code in this project must use English only.** This applies to:
-- All code comments (both `//` inline and `/** */` doc comments)
-- All log messages (`Debug.Log`, `log.Printf`, etc.)
-- All string literals used in UI or status feedback
-- All variable names, method names, and class names
-- All documentation strings (Go doc comments, C# XML doc `<summary>`)
+Assets/
 
-**No Vietnamese text is allowed anywhere in source code files.** This rule applies to both the Unity C# client and the Go server.
+    Scripts/
+        Core/
+        Network/
+        Player/
+        Monster/
+        NPC/
+        Item/
+        Skill/
+        UI/
+        Manager/
+        Config/
+        Utils/
+
+Separate gameplay logic from UI.
+
+---
+
+## Architecture
+
+Use dependency injection whenever possible.
+
+Managers should only coordinate systems.
+
+Gameplay logic belongs to components.
+
+UI never contains gameplay logic.
+
+Networking never contains gameplay logic.
+
+---
+
+## Single Responsibility
+
+Each class should have only one responsibility.
+
+Bad:
+
+Player.cs
+
+- movement
+- animation
+- attack
+- inventory
+- quest
+- crafting
+- networking
+
+Good:
+
+PlayerMovement
+
+PlayerCombat
+
+PlayerAnimation
+
+PlayerInventory
+
+PlayerNetwork
+
+---
+
+## Networking
+
+Server is always authoritative.
+
+Client must never decide:
+
+- Damage
+- HP
+- Position validation
+- Loot
+- Experience
+- Currency
+
+Client only:
+
+- Input
+- Prediction (optional)
+- Visual effects
+- UI
+
+Server validates everything.
+
+---
+
+## Unity Rules
+
+Never use FindObjectOfType during gameplay.
+
+Avoid GameObject.Find.
+
+Cache references.
+
+Avoid Update() unless necessary.
+
+Prefer events.
+
+Avoid allocations every frame.
+
+Use Object Pooling.
+
+Destroy()/Instantiate() only when necessary.
+
+---
+
+## Events
+
+Prefer C# events or EventBus.
+
+Avoid direct dependencies between unrelated systems.
+
+Example:
+
+Player dies
+
+↓
+
+Raise event
+
+↓
+
+UI updates
+
+↓
+
+Quest updates
+
+↓
+
+Achievement updates
+
+---
+
+## Data
+
+Use ScriptableObjects for:
+
+- Items
+- Monsters
+- Skills
+- Maps
+- Configurations
+
+Never store runtime state inside ScriptableObjects.
+
+---
+
+## Serialization
+
+Network packets must be serializable.
+
+Avoid sending unnecessary data.
+
+Only synchronize required fields.
+
+---
+
+## Error Handling
+
+Never ignore exceptions.
+
+Use meaningful logs.
+
+Example:
+
+[Network]
+
+[Combat]
+
+[Inventory]
+
+Avoid Debug.Log spam.
+
+---
+
+## Performance
+
+Avoid LINQ in Update.
+
+Avoid foreach on hot paths if profiling shows allocations.
+
+Cache GetComponent.
+
+Use pooling.
+
+Minimize GC allocations.
+
+---
+
+## Pixel Art
+
+Pixels Per Unit must remain consistent.
+
+Camera must preserve pixel-perfect rendering.
+
+Never scale sprites arbitrarily.
+
+---
+
+## Multiplayer
+
+Never trust client data.
+
+Validate:
+
+Movement
+
+Attack
+
+Item usage
+
+Trade
+
+Quest
+
+Chat
+
+Server decides final state.
+
+---
+
+## Code Style
+
+Methods should generally stay under 40 lines.
+
+Classes should generally stay under 300 lines.
+
+Avoid nested if statements.
+
+Prefer early return.
+
+Example:
+
+if (!IsAlive)
+    return;
+
+instead of
+
+if (IsAlive)
+{
+    ...
+}
+
+---
+
+## Comments
+
+Write code that explains itself.
+
+Comment WHY.
+
+Not WHAT.
+
+Good:
+
+// Prevent speed hacks by validating movement on server.
+
+Bad:
+
+// Increase x by speed.
+
+---
+
+## Async
+
+Never block Unity main thread.
+
+Use async/await carefully.
+
+Cancel tasks properly.
+
+---
+
+## Git
+
+One feature per branch.
+
+Small commits.
+
+Meaningful commit messages.
+
+Example:
+
+feat: add inventory packet
+
+fix: resolve movement desync
+
+refactor: split player combat
+
+---
+
+## Security
+
+Never expose server secrets.
+
+Never trust packet values.
+
+Validate all packet lengths.
+
+Sanitize chat messages.
+
+Prevent packet spam.
+
+Rate-limit requests.
+
+---
+
+## Testing
+
+Core gameplay logic should be testable without UI.
+
+Networking should be mockable.
+
+Business logic should not depend on MonoBehaviour.
+
+---
+
+## Rule Summary
+
+✔ SOLID
+✔ DRY
+✔ KISS
+✔ Composition over Inheritance
+✔ Server Authoritative
+✔ Event-driven architecture
+✔ Dependency Injection
+✔ Object Pooling
+✔ ScriptableObject for static data
+✔ No gameplay logic inside UI
+✔ No networking logic inside gameplay
+✔ No GameObject.Find()
+✔ Cache references
+✔ Early Return
+✔ Clean Architecture
+
+MMO Specific Rules
+
+- The server is the single source of truth.
+- Client prediction must never overwrite server state.
+- Every network message must have a dedicated Packet class.
+- Never mix packet serialization with gameplay logic.
+- Keep packet handlers lightweight; delegate business logic to services.
+- Use finite state machines (FSM) for Player, Monster, and NPC behaviors.
+- Separate static game data (configs) from runtime entity state.
+- Design systems to support thousands of concurrent entities.
+- Optimize for low garbage collection (GC) allocations.
+- Every new feature should be extensible without modifying existing systems (Open/Closed Principle).

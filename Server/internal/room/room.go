@@ -220,6 +220,14 @@ func (r *Room) ApplyMonsterAttacks(attacks []MonsterAttack) {
 			})
 			r.BroadcastTCP(dieMsg, 0)
 			log.Printf("[Room:%s] Monster %d killed player %d", r.ID, atk.MonsterID, atk.PlayerID)
+
+			// Monster returns to Idle after killing — loses aggro and resumes wander
+			for _, m := range r.monsters {
+				if m.ID == atk.MonsterID {
+					m.LoseAggro() // clears TargetID, transitions directly to IdleState
+					break
+				}
+			}
 		}
 	}
 }
@@ -305,7 +313,7 @@ func (r *Room) SimulateProjectiles(dt float32) {
 			ID:       m_.ID,
 			Position: mathutil.Vector2{X: m_.X, Y: m_.Y},
 			ApplyDamage: func(dmg uint16) (uint16, bool) {
-				return m_.TakeDamage(dmg)
+				return m_.TakeDamage(dmg, 0) // 0 = no aggro override; hit loop handles provoke
 			},
 		})
 	}
@@ -322,10 +330,13 @@ func (r *Room) SimulateProjectiles(dt float32) {
 	// Broadcast damage and death events for hits
 	for _, h := range tick.Hits {
 		if h.TargetID >= monster.MonsterIDBase {
-			// A projectile hit a monster — trigger aggro and broadcast damage
+			// A projectile hit a monster — provoke it and track the killer
+			var killerID uint32
 			for _, m := range r.monsters {
 				if m.ID == h.TargetID {
-					m.SetAggro(h.AttackerID)
+					m.SetAggro(h.AttackerID, true)           // provoke
+					m.LastHitPlayerID = h.AttackerID         // record killer
+					killerID = m.LastHitPlayerID
 					break
 				}
 			}
@@ -334,8 +345,50 @@ func (r *Room) SimulateProjectiles(dt float32) {
 				TargetID:    h.TargetID,
 				Damage:      h.Damage,
 				RemainingHP: h.RemainingHP,
+				IsCrit:      h.IsCrit,
 			})
 			r.BroadcastTCP(dmgMsg, 0)
+
+			// Apply life steal to the projectile owner
+			r.mu.RLock()
+			attackerP, aok := r.players[h.AttackerID]
+			r.mu.RUnlock()
+			if aok {
+				attackerP.GetMu().Lock()
+				attackerP.ApplyLifeSteal(uint16(h.Damage))
+				attackerP.GetMu().Unlock()
+			}
+
+			// Award EXP to the killer on killing blow
+			if h.Died && killerID != 0 {
+				r.mu.RLock()
+				killer, ok := r.players[killerID]
+				r.mu.RUnlock()
+				if ok {
+					killer.GetMu().Lock()
+					leveledUp, newLevel, newExp, _ := killer.GainExp(monster.MonsterExpReward)
+					newSP := killer.SkillPoints
+					killer.GetMu().Unlock()
+
+					expMsg := packet.EncodeExpGain(packet.ExpGainPacket{
+						PlayerID:  killerID,
+						ExpGained: uint32(monster.MonsterExpReward),
+						NewExp:    uint32(newExp),
+						NewLevel:  uint32(newLevel),
+					})
+					killer.SendTCP(expMsg)
+
+					if leveledUp {
+						lvlMsg := packet.EncodeLevelUp(packet.LevelUpPacket{
+							PlayerID:       killerID,
+							NewLevel:       uint32(newLevel),
+							NewExp:         uint32(newExp),
+							NewSkillPoints: uint32(newSP),
+						})
+						killer.SendTCP(lvlMsg)
+					}
+				}
+			}
 			continue
 		}
 
@@ -345,8 +398,19 @@ func (r *Room) SimulateProjectiles(dt float32) {
 			TargetID:    h.TargetID,
 			Damage:      h.Damage,
 			RemainingHP: h.RemainingHP,
+			IsCrit:      h.IsCrit,
 		})
 		r.BroadcastTCP(dmgMsg, 0)
+
+		// Apply life steal to the projectile owner
+		r.mu.RLock()
+		attackerP, aok := r.players[h.AttackerID]
+		r.mu.RUnlock()
+		if aok {
+			attackerP.GetMu().Lock()
+			attackerP.ApplyLifeSteal(uint16(h.Damage))
+			attackerP.GetMu().Unlock()
+		}
 
 		if h.Died {
 			r.mu.RLock()
@@ -466,6 +530,18 @@ func (r *Room) GetPlayer(id uint32) (*player.Player, bool) {
 	defer r.mu.RUnlock()
 	p, ok := r.players[id]
 	return p, ok
+}
+
+// GetMonster trả về monster theo ID (thread-safe).
+func (r *Room) GetMonster(id uint32) (*monster.Monster, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, m := range r.monsters {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return nil, false
 }
 
 // PlayerCount trả về số player hiện tại.

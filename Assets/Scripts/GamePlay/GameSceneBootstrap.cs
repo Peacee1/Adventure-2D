@@ -38,6 +38,64 @@ public class GameSceneBootstrap : MonoBehaviour
         // Ensure MonsterManager lives on this persistent GameObject
         if (GetComponent<MonsterManager>() == null)
             gameObject.AddComponent<MonsterManager>();
+
+        // Ensure DamagePopupManager lives on this persistent GameObject
+        if (GetComponent<DamagePopupManager>() == null)
+            gameObject.AddComponent<DamagePopupManager>();
+
+        EnsureDeadPanel();
+        EnsureStatusUI();
+    }
+
+    /// <summary>
+    /// Finds an existing DeadNotificationUI in the scene.
+    /// If none is found, loads DeadNouti prefab from Resources and instantiates it.
+    /// </summary>
+    private void EnsureDeadPanel()
+    {
+        // FindAnyObjectByType searches active AND inactive objects
+        if (FindAnyObjectByType<DeadNotificationUI>(FindObjectsInactive.Include) != null)
+        {
+            Debug.Log("[GameSceneBootstrap] DeadNotificationUI found in scene.");
+            return;
+        }
+
+        var prefab = Resources.Load<GameObject>("Prefab/DeadNoti");
+        if (prefab == null)
+        {
+            Debug.LogWarning("[GameSceneBootstrap] DeadNoti prefab not found in Resources/Prefab/. Death UI will be unavailable.");
+            return;
+        }
+
+        var panel = Instantiate(prefab);
+        panel.name = "DeadNouti";
+        DontDestroyOnLoad(panel);
+        Debug.Log("[GameSceneBootstrap] DeadNotificationUI instantiated from Resources.");
+    }
+
+    /// <summary>
+    /// Finds an existing PlayerStatusUI in the scene.
+    /// If none is found, loads the PlayerStatusUI prefab from Resources and instantiates it.
+    /// </summary>
+    private void EnsureStatusUI()
+    {
+        if (FindAnyObjectByType<PlayerStatusUI>(FindObjectsInactive.Include) != null)
+        {
+            Debug.Log("[GameSceneBootstrap] PlayerStatusUI found in scene.");
+            return;
+        }
+
+        var prefab = Resources.Load<GameObject>("Prefab/Stats");
+        if (prefab == null)
+        {
+            Debug.LogWarning("[GameSceneBootstrap] Stats prefab not found in Resources/Prefab/. HUD will be unavailable.");
+            return;
+        }
+
+        var hud = Instantiate(prefab);
+        hud.name = "PlayerStatusUI";
+        DontDestroyOnLoad(hud);
+        Debug.Log("[GameSceneBootstrap] PlayerStatusUI instantiated from Resources.");
     }
 
     private void OnEnable()
@@ -185,6 +243,7 @@ public class GameSceneBootstrap : MonoBehaviour
         NetworkManager.Instance.OnWorldState   += HandleWorldState;
         NetworkManager.Instance.OnDamageEvent  += HandleDamageEvent;
         NetworkManager.Instance.OnDieEvent     += HandleDieEvent;
+        NetworkManager.Instance.OnRespawnAck   += HandleRespawnAck;
     }
 
     private void UnsubscribeNetworkEvents()
@@ -195,6 +254,7 @@ public class GameSceneBootstrap : MonoBehaviour
         NetworkManager.Instance.OnWorldState   -= HandleWorldState;
         NetworkManager.Instance.OnDamageEvent  -= HandleDamageEvent;
         NetworkManager.Instance.OnDieEvent     -= HandleDieEvent;
+        NetworkManager.Instance.OnRespawnAck   -= HandleRespawnAck;
     }
 
     // ─── Damage / Die Events ──────────────────────────────────────────────────
@@ -227,12 +287,38 @@ public class GameSceneBootstrap : MonoBehaviour
         if (pkt.PlayerID == localID)
         {
             Debug.Log($"[Bootstrap] Local player died (killed by {pkt.KillerID})");
-            // TODO: show death screen / respawn UI
+
+            // Disable local player input while dead
+            // LocalPlayer.isDead blocks input automatically — no need to disable the component.
+            // LocalPlayer's own OnDieEvent handler sets isDead = true.
+
+            // Show the death panel
+            DeadNotificationUI.Instance?.Show();
         }
         else if (remotePlayers.TryGetValue(pkt.PlayerID, out var rp))
         {
             rp.ServerKill();
         }
+    }
+
+    private void HandleRespawnAck(RespawnAckPacket pkt)
+    {
+        uint localID = GameSession.Instance != null ? GameSession.Instance.PlayerID : 0;
+        if (pkt.PlayerID != localID) return;
+
+        Debug.Log($"[Bootstrap] RespawnAck — spawn at ({pkt.X:F1},{pkt.Y:F1}) HP={pkt.HP}");
+
+        // LocalPlayer.OnRespawnAck resets isDead, position and state machine.
+        // Bootstrap only needs to sync HP (which LocalPlayer doesn't track from Ack).
+        if (localPlayer != null)
+        {
+            var baseObj = localPlayer.GetComponent<BaseObject>();
+            if (baseObj != null)
+                baseObj.HP = pkt.HP;
+        }
+
+        // Hide the death panel
+        DeadNotificationUI.Instance?.Hide();
     }
 
     // ─── Remote Players ───────────────────────────────────────────────────────

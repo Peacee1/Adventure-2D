@@ -116,6 +116,15 @@ func EncodeLoginAck(p LoginAckPacket) []byte {
 	writeString(buf, p.MapName)
 	writeString(buf, p.CharName)
 	writeString(buf, p.Message)
+	// Combat stats for StatsManager
+	writeUint16(buf, p.MaxMP)
+	writeUint16(buf, p.ATKPhysical)
+	writeUint16(buf, p.ATKMagic)
+	writeUint16(buf, p.DEFPhysical)
+	writeUint16(buf, p.DEFMagic)
+	writeUint32(buf, p.SkillPoints)
+	writeFloat32(buf, p.CritRate)
+	writeFloat32(buf, p.LifeSteal)
 	return EncodeFrame(TypeLoginAck, buf.Bytes())
 }
 
@@ -403,4 +412,53 @@ func EncodeHitboxConfigAck(p HitboxConfigAckPacket) []byte {
 	writeFloat32(buf, p.Width)
 	writeFloat32(buf, p.Height)
 	return EncodeFrame(TypeHitboxConfigAck, buf.Bytes())
+}
+
+// EncodeExpGain encodes an EXP gain notification (sent only to the killer).
+func EncodeExpGain(p ExpGainPacket) []byte {
+	buf := &bytes.Buffer{}
+	writeUint32(buf, p.PlayerID)
+	writeUint32(buf, p.ExpGained)
+	writeUint32(buf, p.NewExp)
+	writeUint32(buf, p.NewLevel)
+	return EncodeFrame(TypeExpGain, buf.Bytes())
+}
+
+// EncodeLevelUp encodes a level-up notification (sent only to the killer).
+func EncodeLevelUp(p LevelUpPacket) []byte {
+	buf := &bytes.Buffer{}
+	writeUint32(buf, p.PlayerID)
+	writeUint32(buf, p.NewLevel)
+	writeUint32(buf, p.NewExp)
+	writeUint32(buf, p.NewSkillPoints)
+	return EncodeFrame(TypeLevelUp, buf.Bytes())
+}
+
+// DecodeSpendSkillPointReq decodes the client request to spend a skill point.
+func DecodeSpendSkillPointReq(payload []byte) (SpendSkillPointReqPacket, error) {
+	r := bytes.NewReader(payload)
+	statByte, err := r.ReadByte()
+	if err != nil {
+		return SpendSkillPointReqPacket{}, fmt.Errorf("SpendSkillPointReq: %w", err)
+	}
+	return SpendSkillPointReqPacket{StatType: StatUpgradeType(statByte)}, nil
+}
+
+// EncodeSpendSkillPointAck encodes the server response to a skill point spend request.
+func EncodeSpendSkillPointAck(p SpendSkillPointAckPacket) []byte {
+	buf := &bytes.Buffer{}
+	success := uint8(0)
+	if p.Success {
+		success = 1
+	}
+	writeUint8(buf, success)
+	writeUint8(buf, p.FailReason)
+	writeUint32(buf, p.NewSkillPoints)
+	writeUint16(buf, p.NewMaxHP)
+	writeUint16(buf, p.NewMaxMP)
+	writeUint16(buf, p.NewATKPhysical)
+	writeUint16(buf, p.NewATKMagic)
+	writeUint16(buf, p.NewDEFPhysical)
+	writeUint16(buf, p.NewDEFMagic)
+	return EncodeFrame(TypeSpendSkillPointAck, buf.Bytes())
 }

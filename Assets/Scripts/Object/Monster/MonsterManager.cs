@@ -322,4 +322,19 @@ public class MonsterManager : MonoBehaviour
             if (v != null) Destroy(v.gameObject);
         _views.Clear();
     }
+
+    /// <summary>
+    /// Returns the world position of a monster by its server ID.
+    /// Used by DamagePopupManager to spawn floating damage numbers.
+    /// </summary>
+    public bool TryGetPosition(uint monsterID, out Vector3 position)
+    {
+        if (_views.TryGetValue(monsterID, out var view) && view != null)
+        {
+            position = view.transform.position;
+            return true;
+        }
+        position = Vector3.zero;
+        return false;
+    }
 }

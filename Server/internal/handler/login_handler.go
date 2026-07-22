@@ -129,22 +129,39 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 	session.Player.Buffs     = record.Buffs
 	session.Player.Skills    = record.Skills
 
-	// Populate Stats from DB record. AttackSpeed falls back to DefaultStats if not stored yet.
-	defaultStats := player.DefaultStats(record.JobClass)
-	attackSpeed := record.AttackSpeed
-	if attackSpeed == 0 {
-		attackSpeed = defaultStats.AttackSpeed
+	// Populate Stats from DB record.
+	// For each field: if the stored value is 0 (legacy/unset row), fall back to DefaultStats.
+	def := player.DefaultStats(record.JobClass)
+
+	orDefault16 := func(stored uint16, fallback uint16) uint16 {
+		if stored == 0 { return fallback }
+		return stored
 	}
+	orDefaultF := func(stored float32, fallback float32) float32 {
+		if stored == 0 { return fallback }
+		return stored
+	}
+
 	session.Player.Stats = player.Stats{
-		MaxHP:       record.MaxHP,
-		ATKPhysical: record.ATKPhysical,
-		ATKMagic:    record.ATKMagic,
-		DEFPhysical: record.DEFPhysical,
-		DEFMagic:    record.DEFMagic,
-		AttackRange: record.AttackRange,
-		MoveSpeed:   record.MoveSpeed,
-		AttackSpeed: attackSpeed,
+		MaxHP:       orDefault16(record.MaxHP,       def.MaxHP),
+		MaxMP:       orDefault16(record.MaxMP,       def.MaxMP),
+		ATKPhysical: orDefault16(record.ATKPhysical, def.ATKPhysical),
+		ATKMagic:    orDefault16(record.ATKMagic,    def.ATKMagic),
+		DEFPhysical: orDefault16(record.DEFPhysical, def.DEFPhysical),
+		DEFMagic:    orDefault16(record.DEFMagic,    def.DEFMagic),
+		AttackRange: orDefaultF(record.AttackRange,  def.AttackRange),
+		MoveSpeed:   orDefaultF(record.MoveSpeed,    def.MoveSpeed),
+		AttackSpeed: orDefaultF(record.AttackSpeed,  def.AttackSpeed),
+		CritRate:    record.CritRate,   // 0 is a valid default (no crit)
+		LifeSteal:   record.LifeSteal,  // 0 is a valid default (no steal)
 	}
+	session.Player.SkillPoints = record.SkillPoints
+
+	log.Printf("[LoginHandler] Stats loaded — MaxHP=%d MaxMP=%d ATKPhy=%d ATKMag=%d DEFPhy=%d DEFMag=%d AR=%.1f SP=%d",
+		session.Player.Stats.MaxHP, session.Player.Stats.MaxMP,
+		session.Player.Stats.ATKPhysical, session.Player.Stats.ATKMagic,
+		session.Player.Stats.DEFPhysical, session.Player.Stats.DEFMagic,
+		session.Player.Stats.AttackRange, session.Player.SkillPoints)
 
 	// Hồi máu nếu HP = 0 (tránh spawn chết)
 	hp := record.HP
@@ -172,17 +189,26 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 	session.AccountID = accountID
 
 	session.Send(packet.EncodeLoginAck(packet.LoginAckPacket{
-		Success:  true,
-		PlayerID: record.ID,
-		JobClass: uint8(record.JobClass),
-		Level:    uint16(record.Level),
-		Exp:      uint32(record.Exp),
-		HP:       hp,
-		MaxHP:    session.Player.Stats.MaxHP,
-		X:        spawnX,
-		Y:        spawnY,
-		MapName:  mapName,
-		CharName: record.Username,
-		Message:  "OK",
+		Success:     true,
+		PlayerID:    record.ID,
+		JobClass:    uint8(record.JobClass),
+		Level:       uint16(record.Level),
+		Exp:         uint32(record.Exp),
+		HP:          hp,
+		MaxHP:       session.Player.Stats.MaxHP,
+		X:           spawnX,
+		Y:           spawnY,
+		MapName:     mapName,
+		CharName:    record.Username,
+		Message:     "OK",
+		// Combat stats for StatsManager
+		MaxMP:       session.Player.Stats.MaxMP,
+		ATKPhysical: session.Player.Stats.ATKPhysical,
+		ATKMagic:    session.Player.Stats.ATKMagic,
+		DEFPhysical: session.Player.Stats.DEFPhysical,
+		DEFMagic:    session.Player.Stats.DEFMagic,
+		SkillPoints: uint32(session.Player.SkillPoints),
+		CritRate:    session.Player.Stats.CritRate,
+		LifeSteal:   session.Player.Stats.LifeSteal,
 	}))
 }
