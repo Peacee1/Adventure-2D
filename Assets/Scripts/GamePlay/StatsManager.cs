@@ -56,6 +56,13 @@ public class StatsManager : MonoBehaviour
     [SerializeField] private Button atkMagicUpgradeButton;
     [SerializeField] private Button defUpgradeButton;
 
+    [Header("Optional Stat Level Text References (Assign in Inspector)")]
+    [SerializeField] private TMP_Text hpLevelText;
+    [SerializeField] private TMP_Text mpLevelText;
+    [SerializeField] private TMP_Text atkPhysicalLevelText;
+    [SerializeField] private TMP_Text atkMagicLevelText;
+    [SerializeField] private TMP_Text defLevelText;
+
     [Header("Toggle key (default: Tab)")]
     [SerializeField] private KeyCode toggleKey = KeyCode.Tab;
 
@@ -149,18 +156,48 @@ public class StatsManager : MonoBehaviour
         SetText(skillPointsText, $"Skill Points:  {session.SkillPoints}");
         SetText(expText,         $"EXP:  {session.CurrentExp} / {maxExp}");
 
-        // Core stats
-        SetText(maxHPText,       $"HP:            {session.MaxHP}");
-        SetText(maxMPText,       $"MP:            {session.MaxMP}");
-        SetText(atkPhysicalText, $"ATK Physical:  {session.ATKPhysical}");
-        SetText(atkMagicText,    $"ATK Magic:     {session.ATKMagic}");
-        SetText(defPhysicalText, $"DEF Physical:  {session.DEFPhysical}");
-        SetText(defMagicText,    $"DEF Magic:     {session.DEFMagic}");
+        // Calculate stat levels based on job base stats (starts at Level 1)
+        (ushort baseHP, ushort baseMP, ushort baseATKPhy, ushort baseATKMag, ushort baseDEFPhy, _) = GetJobBaseStats(session.JobClass);
+
+        int hpLevel          = 1 + Mathf.Max(0, (session.MaxHP - baseHP) / 100);
+        int mpLevel          = 1 + Mathf.Max(0, (session.MaxMP - baseMP) / 100);
+        int atkPhysicalLevel = 1 + Mathf.Max(0, (session.ATKPhysical - baseATKPhy) / 10);
+        int atkMagicLevel    = 1 + Mathf.Max(0, (session.ATKMagic - baseATKMag) / 10);
+        int defLevel         = 1 + Mathf.Max(0, (session.DEFPhysical - baseDEFPhy) / 10);
+
+        // Core stats (includes level tag)
+        SetText(maxHPText,       $"HP:            {session.MaxHP} (Lv.{hpLevel})");
+        SetText(maxMPText,       $"MP:            {session.MaxMP} (Lv.{mpLevel})");
+        SetText(atkPhysicalText, $"ATK Physical:  {session.ATKPhysical} (Lv.{atkPhysicalLevel})");
+        SetText(atkMagicText,    $"ATK Magic:     {session.ATKMagic} (Lv.{atkMagicLevel})");
+        SetText(defPhysicalText, $"DEF Physical:  {session.DEFPhysical} (Lv.{defLevel})");
+        SetText(defMagicText,    $"DEF Magic:     {session.DEFMagic} (Lv.{defLevel})");
+
+        // Dedicated level labels (if assigned in Inspector)
+        SetText(hpLevelText,          $"Lv.{hpLevel}");
+        SetText(mpLevelText,          $"Lv.{mpLevel}");
+        SetText(atkPhysicalLevelText, $"Lv.{atkPhysicalLevel}");
+        SetText(atkMagicLevelText,    $"Lv.{atkMagicLevel}");
+        SetText(defLevelText,         $"Lv.{defLevel}");
 
         // Special stats
         SetText(critRateText,    $"Crit Rate:     {session.CritRate * 100f:F1}%");
         SetText(lifeStealText,   $"Life Steal:    {session.LifeSteal * 100f:F1}%");
         SetText(attackSpeedText, $"ASPD:          {session.AttackSpeed:F2}s");
+    }
+
+    private static (ushort hp, ushort mp, ushort atkPhy, ushort atkMag, ushort defPhy, ushort defMag) GetJobBaseStats(JobClass job)
+    {
+        return job switch
+        {
+            JobClass.Archer   => (800,  300, 80,  10,  30,  20),
+            JobClass.Warrior  => (1100, 200, 90,  10,  60,  25),
+            JobClass.Mage     => (650,  600, 15,  120, 20,  50),
+            JobClass.Healer   => (750,  700, 20,  55,  25,  60),
+            JobClass.Assassin => (700,  250, 110, 20,  25,  15),
+            JobClass.Tank     => (1500, 150, 50,  10,  100, 80),
+            _                 => (800,  200, 80,  10,  30,  20),
+        };
     }
 
     // ── Stat Upgrade API (1 Skill Point per upgrade) ──────────────────────────

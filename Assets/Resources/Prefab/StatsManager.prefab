@@ -2471,7 +2471,7 @@ GameObject:
   - component: {fileID: 7183151664985398148}
   - component: {fileID: 7924386018530086762}
   m_Layer: 5
-  m_Name: AddATKP
+  m_Name: AddATKM
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3168,6 +3168,11 @@ MonoBehaviour:
   lifeStealText: {fileID: 8798218646773233074}
   attackSpeedText: {fileID: 0}
   expText: {fileID: 0}
+  hpUpgradeButton: {fileID: 3324293797607789924}
+  mpUpgradeButton: {fileID: 2103115419022368349}
+  atkPhysicalUpgradeButton: {fileID: 9168510367715605751}
+  atkMagicUpgradeButton: {fileID: 7924386018530086762}
+  defUpgradeButton: {fileID: 2879150680452624841}
   toggleKey: 32
 --- !u!1 &6284806344602764265
 GameObject:
