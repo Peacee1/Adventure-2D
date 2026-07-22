@@ -18,6 +18,7 @@ public class GameSession : MonoBehaviour
     public string   Username  { get; private set; }
     public ushort   HP        { get; private set; }
     public ushort   MaxHP     { get; private set; }
+    public ushort   MP        { get; private set; }
     public float    SpawnX    { get; private set; }
     public float    SpawnY    { get; private set; }
 
@@ -77,6 +78,7 @@ public class GameSession : MonoBehaviour
         MaxHP       = maxHP > 0 ? maxHP : hp;
         SpawnX      = x;
         SpawnY      = y;
+        MP          = maxMP;
         MaxMP       = maxMP;
         ATKPhysical = atkPhy;
         ATKMagic    = atkMag;
