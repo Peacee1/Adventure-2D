@@ -180,13 +180,14 @@ func (p *Player) GetMu() *sync.RWMutex {
 	return &p.mu
 }
 
-// InitState khởi tạo vị trí và HP của player từ Database (thread-safe).
+// InitState khởi tạo vị trí, HP và MP của player (thread-safe).
 // QUAN TRỌNG: phải set Destination = Position để game loop không di chuyển player về (0,0).
 func (p *Player) InitState(pos mathutil.Vector2, hp uint16) {
 	p.mu.Lock()
 	p.Position    = pos
 	p.Destination = pos // Game loop sẽ dừng ngay tại đây cho đến khi client gửi destination
 	p.HP          = hp
+	p.MP          = p.Stats.MaxMP
 	p.mu.Unlock()
 }
 

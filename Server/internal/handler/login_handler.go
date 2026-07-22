@@ -163,12 +163,9 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 		session.Player.Stats.DEFPhysical, session.Player.Stats.DEFMagic,
 		session.Player.Stats.AttackRange, session.Player.SkillPoints)
 
-	// Hồi máu nếu HP = 0 (tránh spawn chết)
-	hp := record.HP
-	if hp == 0 {
-		hp = session.Player.Stats.MaxHP
-		log.Printf("[LoginHandler] Character HP=0 → restored to MaxHP=%d", hp)
-	}
+	// Luôn hồi đầy HP và MP khi đăng nhập nhân vật
+	hp := session.Player.Stats.MaxHP
+	mp := session.Player.Stats.MaxMP
 
 	mapName := record.MapName
 	if mapName == "" { mapName = "Map0" }
@@ -182,8 +179,8 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 	}
 	session.Player.InitState(mathutil.Vector2{X: spawnX, Y: spawnY}, hp)
 
-	log.Printf("[LoginHandler] Login OK: %s (ID=%d) → Char=%s (ID=%d) Job=%d Level=%d Map=%q Pos=(%.2f,%.2f) from %s",
-		req.Username, accountID, record.Username, record.ID, record.JobClass, record.Level, mapName, record.X, record.Y, clientAddr)
+	log.Printf("[LoginHandler] Login OK: %s (ID=%d) → Char=%s (ID=%d) Job=%d Level=%d Map=%q Pos=(%.2f,%.2f) HP=%d/%d MP=%d/%d from %s",
+		req.Username, accountID, record.Username, record.ID, record.JobClass, record.Level, mapName, record.X, record.Y, hp, hp, mp, mp, clientAddr)
 
 	// Lưu AccountID vào session để CharacterListHandler có thể dùng sau
 	session.AccountID = accountID
