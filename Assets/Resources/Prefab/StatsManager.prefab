@@ -3178,6 +3178,10 @@ MonoBehaviour:
   atkPhysicalLevelText: {fileID: 1345345948888634572}
   atkMagicLevelText: {fileID: 6952186983607523701}
   defLevelText: {fileID: 5358762996041638122}
+  page1Object: {fileID: 6284806344602764265}
+  page2Object: {fileID: 7288828702482388232}
+  page1Button: {fileID: 5665825203191430330}
+  page2Button: {fileID: 4341391869663786839}
   toggleKey: 32
 --- !u!1 &6284806344602764265
 GameObject:

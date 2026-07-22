@@ -180,19 +180,19 @@ public class StatsManager : MonoBehaviour
         int defLevel         = 1 + Mathf.Max(0, (session.DEFPhysical - baseDEFPhy) / 10);
 
         // Core stats (includes level tag)
-        SetText(maxHPText,       $"HP:            {session.MaxHP} (Lv.{hpLevel})");
-        SetText(maxMPText,       $"MP:            {session.MaxMP} (Lv.{mpLevel})");
-        SetText(atkPhysicalText, $"ATK Physical:  {session.ATKPhysical} (Lv.{atkPhysicalLevel})");
-        SetText(atkMagicText,    $"ATK Magic:     {session.ATKMagic} (Lv.{atkMagicLevel})");
-        SetText(defPhysicalText, $"DEF Physical:  {session.DEFPhysical} (Lv.{defLevel})");
-        SetText(defMagicText,    $"DEF Magic:     {session.DEFMagic} (Lv.{defLevel})");
+        SetText(maxHPText,       $"HP:            {session.MaxHP} (HP Lv.{hpLevel})");
+        SetText(maxMPText,       $"MP:            {session.MaxMP} (MP Lv.{mpLevel})");
+        SetText(atkPhysicalText, $"ATK Physical:  {session.ATKPhysical} (ATKP Lv.{atkPhysicalLevel})");
+        SetText(atkMagicText,    $"ATK Magic:     {session.ATKMagic} (ATKM Lv.{atkMagicLevel})");
+        SetText(defPhysicalText, $"DEF Physical:  {session.DEFPhysical} (DEF Lv.{defLevel})");
+        SetText(defMagicText,    $"DEF Magic:     {session.DEFMagic} (DEF Lv.{defLevel})");
 
         // Dedicated level labels (if assigned in Inspector)
-        SetText(hpLevelText,          $"Lv.{hpLevel}");
-        SetText(mpLevelText,          $"Lv.{mpLevel}");
-        SetText(atkPhysicalLevelText, $"Lv.{atkPhysicalLevel}");
-        SetText(atkMagicLevelText,    $"Lv.{atkMagicLevel}");
-        SetText(defLevelText,         $"Lv.{defLevel}");
+        SetText(hpLevelText,          $"HP Lv.{hpLevel}");
+        SetText(mpLevelText,          $"MP Lv.{mpLevel}");
+        SetText(atkPhysicalLevelText, $"ATKP Lv.{atkPhysicalLevel}");
+        SetText(atkMagicLevelText,    $"ATKM Lv.{atkMagicLevel}");
+        SetText(defLevelText,         $"DEF Lv.{defLevel}");
 
         // Special stats
         SetText(critRateText,    $"Crit Rate:     {session.CritRate * 100f:F1}%");
