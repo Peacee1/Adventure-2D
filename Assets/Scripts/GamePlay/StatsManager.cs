@@ -35,9 +35,7 @@ public class StatsManager : MonoBehaviour
 
     public static StatsManager Instance { get; private set; }
 
-    // ── Inspector overrides (leave null to auto-find by child name) ───────────
-
-    [Header("Auto-wired from prefab hierarchy (leave null to auto-find)")]
+    [Header("UI Text References (Assign in Inspector or leave auto-find)")]
     [SerializeField] private TMP_Text titleText;
     [SerializeField] private TMP_Text skillPointsText;
     [SerializeField] private TMP_Text maxHPText;
@@ -50,6 +48,13 @@ public class StatsManager : MonoBehaviour
     [SerializeField] private TMP_Text lifeStealText;
     [SerializeField] private TMP_Text attackSpeedText;
     [SerializeField] private TMP_Text expText;
+
+    [Header("Stat Upgrade Buttons (Assign in Inspector)")]
+    [SerializeField] private Button hpUpgradeButton;
+    [SerializeField] private Button mpUpgradeButton;
+    [SerializeField] private Button atkPhysicalUpgradeButton;
+    [SerializeField] private Button atkMagicUpgradeButton;
+    [SerializeField] private Button defUpgradeButton;
 
     [Header("Toggle key (default: Tab)")]
     [SerializeField] private KeyCode toggleKey = KeyCode.Tab;
@@ -84,7 +89,7 @@ public class StatsManager : MonoBehaviour
             Debug.LogWarning("[StatsManager] Root has no children — expected Canvas as child[0].");
         }
 
-        AutoWireReferences();
+        BindButtonListeners();
         SetVisible(false);
     }
 
@@ -186,59 +191,22 @@ public class StatsManager : MonoBehaviour
         NetworkManager.Instance?.SendSpendSkillPoint(statType);
     }
 
-    // ── Auto-wiring ───────────────────────────────────────────────────────────
+    // ── Button Listener Binding ───────────────────────────────────────────────
 
-    private void AutoWireReferences()
+    private void BindButtonListeners()
     {
-        if (_panel == null) return;
-
-        titleText       ??= FindTMP("Title");
-        skillPointsText ??= FindTMP("SKP");
-        expText         ??= FindTMP("Exp");
-        maxHPText       ??= FindTMP("MaxHP");
-        maxMPText       ??= FindTMP("MaxMP");
-        atkPhysicalText ??= FindTMP("ATKPhysical");
-        atkMagicText    ??= FindTMP("ATKMagic");
-        defPhysicalText ??= FindTMP("DEFPhysical");
-        defMagicText    ??= FindTMP("DEFMagic");
-        critRateText    ??= FindTMP("CritRate");
-        lifeStealText   ??= FindTMP("LifeSteal");
-        attackSpeedText ??= FindTMP("ASPD");
-
-        WireButton("PlusHP",          UpgradeHP);
-        WireButton("PlusMP",          UpgradeMP);
-        WireButton("PlusATKP",        UpgradeATKPhysical);
-        WireButton("PlusATKM",        UpgradeATKMagic);
-        WireButton("PlusDEF",         UpgradeDEF);
-
-        WireButton("BtnHP",           UpgradeHP);
-        WireButton("BtnMP",           UpgradeMP);
-        WireButton("BtnATKPhysical",  UpgradeATKPhysical);
-        WireButton("BtnATKMagic",     UpgradeATKMagic);
-        WireButton("BtnDEF",          UpgradeDEF);
-
-        Debug.Log($"[StatsManager] Auto-wire done: title={titleText != null} sp={skillPointsText != null} " +
-                  $"hp={maxHPText != null} mp={maxMPText != null} atk={atkPhysicalText != null}");
+        BindButton(hpUpgradeButton,          UpgradeHP);
+        BindButton(mpUpgradeButton,          UpgradeMP);
+        BindButton(atkPhysicalUpgradeButton, UpgradeATKPhysical);
+        BindButton(atkMagicUpgradeButton,    UpgradeATKMagic);
+        BindButton(defUpgradeButton,         UpgradeDEF);
     }
 
-    private void WireButton(string childName, UnityEngine.Events.UnityAction action)
+    private static void BindButton(Button btn, UnityEngine.Events.UnityAction action)
     {
-        var btnTransform = _panel.Find(childName);
-        if (btnTransform != null)
-        {
-            var btn = btnTransform.GetComponent<Button>();
-            if (btn != null)
-            {
-                btn.onClick.RemoveListener(action);
-                btn.onClick.AddListener(action);
-            }
-        }
-    }
-
-    private TMP_Text FindTMP(string childName)
-    {
-        var t = _panel.Find(childName);
-        return t != null ? t.GetComponent<TMP_Text>() : null;
+        if (btn == null) return;
+        btn.onClick.RemoveListener(action);
+        btn.onClick.AddListener(action);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
