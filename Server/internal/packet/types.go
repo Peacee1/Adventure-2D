@@ -34,6 +34,7 @@ type LoginAckPacket struct {
 	SkillPoints uint32
 	CritRate    float32 // 0.0–1.0
 	LifeSteal   float32 // 0.0–1.0
+	AttackSpeed float32 // seconds per attack (e.g. 0.2s)
 }
 
 // RegisterReqPacket: sent by the client when registering an account.

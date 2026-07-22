@@ -213,8 +213,9 @@ public static class PacketDecoder
         public ushort DEFPhysical;
         public ushort DEFMagic;
         public uint   SkillPoints;
-        public float  CritRate;  // 0.0–1.0
-        public float  LifeSteal; // 0.0–1.0
+        public float  CritRate;    // 0.0–1.0
+        public float  LifeSteal;   // 0.0–1.0
+        public float  AttackSpeed; // seconds per attack (e.g. 0.2s)
     }
 
     public static LoginAckData DecodeLoginAck(byte[] payload)
@@ -248,6 +249,7 @@ public static class PacketDecoder
         if (ms.Position < ms.Length) data.SkillPoints = r.ReadUInt32();
         if (ms.Position < ms.Length) data.CritRate    = r.ReadSingle();
         if (ms.Position < ms.Length) data.LifeSteal   = r.ReadSingle();
+        if (ms.Position < ms.Length) data.AttackSpeed = r.ReadSingle();
 
         return data;
     }

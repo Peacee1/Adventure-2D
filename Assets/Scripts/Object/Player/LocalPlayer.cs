@@ -99,7 +99,13 @@ public class LocalPlayer : MonoBehaviour, IHumanController
             Debug.Log("[LocalPlayer] NavMeshAgent disabled — position driven by server.");
         }
 
-        if (human != null) human.Controller = this;
+        if (human != null)
+        {
+            human.Controller = this;
+            if (session.AttackSpeed > 0f)
+                human.AttackSpeed = session.AttackSpeed;
+            Debug.Log($"[LocalPlayer] Init: AttackSpeed={human.AttackSpeed:F2}s");
+        }
 
         var levelSystem = GetComponent<LevelSystem>();
         if (levelSystem != null)

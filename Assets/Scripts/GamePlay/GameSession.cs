@@ -30,6 +30,7 @@ public class GameSession : MonoBehaviour
     public ushort   DEFMagic    { get; private set; }
     public float    CritRate    { get; private set; } // 0.0–1.0
     public float    LifeSteal   { get; private set; } // 0.0–1.0
+    public float    AttackSpeed { get; private set; } = 1.0f; // seconds per attack
 
     // ─── Level ────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ public class GameSession : MonoBehaviour
     /// <summary>Called from MenuScene after successful LoginAck.</summary>
     public void SetPlayerInfo(uint playerID, byte jobClassByte, string username, ushort hp, ushort maxHP, float x, float y,
         ushort maxMP = 0, ushort atkPhy = 0, ushort atkMag = 0, ushort defPhy = 0, ushort defMag = 0,
-        int skillPoints = 0, float critRate = 0f, float lifeSteal = 0f)
+        int skillPoints = 0, float critRate = 0f, float lifeSteal = 0f, float attackSpeed = 0f)
     {
         PlayerID    = playerID;
         JobClass    = ByteToJobClass(jobClassByte);
@@ -84,8 +85,9 @@ public class GameSession : MonoBehaviour
         SkillPoints = skillPoints;
         CritRate    = critRate;
         LifeSteal   = lifeSteal;
+        AttackSpeed = attackSpeed > 0f ? attackSpeed : 1.0f;
 
-        Debug.Log($"[GameSession] SetPlayerInfo: ID={playerID} Job={JobClass} User={username} HP={hp}/{MaxHP} MP={MaxMP} SP={SkillPoints}");
+        Debug.Log($"[GameSession] SetPlayerInfo: ID={playerID} Job={JobClass} User={username} HP={hp}/{MaxHP} MP={MaxMP} SP={SkillPoints} AtkSpeed={AttackSpeed}");
     }
 
     /// <summary>Updates combat stats after SpendSkillPointAck.</summary>

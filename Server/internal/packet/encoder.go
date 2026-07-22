@@ -125,6 +125,7 @@ func EncodeLoginAck(p LoginAckPacket) []byte {
 	writeUint32(buf, p.SkillPoints)
 	writeFloat32(buf, p.CritRate)
 	writeFloat32(buf, p.LifeSteal)
+	writeFloat32(buf, p.AttackSpeed)
 	return EncodeFrame(TypeLoginAck, buf.Bytes())
 }
 

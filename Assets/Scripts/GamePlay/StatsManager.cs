@@ -48,6 +48,7 @@ public class StatsManager : MonoBehaviour
     [SerializeField] private TMP_Text defMagicText;
     [SerializeField] private TMP_Text critRateText;
     [SerializeField] private TMP_Text lifeStealText;
+    [SerializeField] private TMP_Text attackSpeedText;
     [SerializeField] private TMP_Text expText;
 
     [Header("Toggle key (default: Tab)")]
@@ -154,6 +155,7 @@ public class StatsManager : MonoBehaviour
         // Special stats
         SetText(critRateText,    $"Crit Rate:     {session.CritRate * 100f:F1}%");
         SetText(lifeStealText,   $"Life Steal:    {session.LifeSteal * 100f:F1}%");
+        SetText(attackSpeedText, $"ASPD:          {session.AttackSpeed:F2}s");
     }
 
     // ── Auto-wiring ───────────────────────────────────────────────────────────
@@ -173,6 +175,7 @@ public class StatsManager : MonoBehaviour
         defMagicText    ??= FindTMP("DEFMagic");
         critRateText    ??= FindTMP("CritRate");
         lifeStealText   ??= FindTMP("LifeSteal");
+        attackSpeedText ??= FindTMP("ASPD");
 
         Debug.Log($"[StatsManager] Auto-wire done: title={titleText != null} sp={skillPointsText != null} " +
                   $"hp={maxHPText != null} mp={maxMPText != null} atk={atkPhysicalText != null}");

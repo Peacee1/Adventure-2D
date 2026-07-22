@@ -210,5 +210,6 @@ func (h *LoginHandler) Handle(payload []byte, session *player.Session) {
 		SkillPoints: uint32(session.Player.SkillPoints),
 		CritRate:    session.Player.Stats.CritRate,
 		LifeSteal:   session.Player.Stats.LifeSteal,
+		AttackSpeed: session.Player.Stats.AttackSpeed,
 	}))
 }

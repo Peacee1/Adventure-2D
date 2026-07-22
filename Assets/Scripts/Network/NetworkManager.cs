@@ -390,7 +390,8 @@ public class NetworkManager : MonoBehaviour
                                 defMag:       loginAck.DEFMagic,
                                 skillPoints:  (int)loginAck.SkillPoints,
                                 critRate:     loginAck.CritRate,
-                                lifeSteal:    loginAck.LifeSteal
+                                lifeSteal:    loginAck.LifeSteal,
+                                attackSpeed:  loginAck.AttackSpeed
                             );
                             GameSession.Instance.SetLevel(loginAck.Level, (int)loginAck.Exp);
                             GameSession.Instance.SetMapName(loginAck.MapName);
