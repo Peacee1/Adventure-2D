@@ -146,6 +146,13 @@ public static class PacketEncoder
         return MakeFrame(PacketType.HitboxConfigReq, new byte[0]);
     }
 
+    public static byte[] EncodeSpendSkillPointReq(byte statType)
+    {
+        using var ms = new MemoryStream();
+        ms.WriteByte(statType); // 0=HP, 1=MP, 2=ATKPhy, 3=ATKMag, 4=DEF
+        return MakeFrame(PacketType.SpendSkillPointReq, ms.ToArray());
+    }
+
     // ── Write helpers ─────────────────────────────────────────────────────────
 
     private static void WriteUint8(MemoryStream ms, byte v)     => ms.WriteByte(v);
@@ -529,14 +536,6 @@ public static class PacketDecoder
         public ushort NewATKMagic;
         public ushort NewDEFPhysical;
         public ushort NewDEFMagic;
-    }
-
-    public static byte[] EncodeSpendSkillPointReq(byte statType)
-    {
-        using var ms = new MemoryStream();
-        using var w  = new BinaryWriter(ms);
-        w.Write(statType); // 0=HP, 1=MP, 2=ATKPhy, 3=ATKMag, 4=DEF
-        return EncodeFrame((ushort)PacketType.SpendSkillPointReq, ms.ToArray());
     }
 
     public static SpendSkillPointAckPacket DecodeSpendSkillPointAck(byte[] payload)

@@ -547,7 +547,7 @@ public class NetworkManager : MonoBehaviour
     /// <summary>Sends a request to spend 1 skill point on statType (0=HP, 1=MP, 2=ATKPhy, 3=ATKMag, 4=DEF).</summary>
     public void SendSpendSkillPoint(byte statType)
     {
-        SendTCP(PacketCodec.EncodeSpendSkillPointReq(statType));
+        SendTCP(PacketEncoder.EncodeSpendSkillPointReq(statType));
     }
 
     // ─── Private — Send ───────────────────────────────────────────────────────
