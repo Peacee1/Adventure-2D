@@ -36,9 +36,11 @@ public enum PacketType : ushort
     HitboxConfigReq   = 0x003e, // C→S: request hitbox config
     HitboxConfigAck   = 0x003f, // S→C: receive hitbox config
 
-    // EXP / Level
-    ExpGain = 0x0040,           // S→C: EXP gained (only sent to killer)
-    LevelUp = 0x0041,           // S→C: level-up notification
+    // EXP / Level / Skill Points
+    ExpGain             = 0x0040, // S→C: EXP gained (only sent to killer)
+    LevelUp             = 0x0041, // S→C: level-up notification
+    SpendSkillPointReq  = 0x0042, // C→S: spend 1 skill point
+    SpendSkillPointAck  = 0x0043, // S→C: skill point response
 
     // System
     Ping = 0xFF00,

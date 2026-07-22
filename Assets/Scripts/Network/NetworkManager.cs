@@ -53,8 +53,9 @@ public class NetworkManager : MonoBehaviour
     /// <summary>Fired when the server returns the 3-slot character list in response to GetCharListReq.</summary>
     public event Action<CharacterData[]>          OnCharacterListReceived;
     public event Action<PacketDecoder.HitboxConfigPacket> OnHitboxConfigReceived;
-    public event Action<PacketDecoder.ExpGainPacket>      OnExpGain;
-    public event Action<PacketDecoder.LevelUpPacket>      OnLevelUp;
+    public event Action<PacketDecoder.ExpGainPacket>              OnExpGain;
+    public event Action<PacketDecoder.LevelUpPacket>              OnLevelUp;
+    public event Action<PacketDecoder.SpendSkillPointAckPacket>   OnSpendSkillPointAck;
 
     // ─── State ────────────────────────────────────────────────────────────────
 
@@ -518,7 +519,35 @@ public class NetworkManager : MonoBehaviour
                     StatsManager.Instance?.Refresh();
                 });
                 break;
+
+            case PacketType.SpendSkillPointAck:
+                var spAck = PacketDecoder.DecodeSpendSkillPointAck(payload);
+                Enqueue(() =>
+                {
+                    if (spAck.Success && GameSession.Instance != null)
+                    {
+                        GameSession.Instance.SetCombatStats(
+                            maxHP:       spAck.NewMaxHP,
+                            maxMP:       spAck.NewMaxMP,
+                            atkPhy:      spAck.NewATKPhysical,
+                            atkMag:      spAck.NewATKMagic,
+                            defPhy:      spAck.NewDEFPhysical,
+                            defMag:      spAck.NewDEFMagic,
+                            skillPoints: (int)spAck.NewSkillPoints
+                        );
+                    }
+                    OnSpendSkillPointAck?.Invoke(spAck);
+                    PlayerStatusUI.Instance?.Refresh();
+                    StatsManager.Instance?.Refresh();
+                });
+                break;
         }
+    }
+
+    /// <summary>Sends a request to spend 1 skill point on statType (0=HP, 1=MP, 2=ATKPhy, 3=ATKMag, 4=DEF).</summary>
+    public void SendSpendSkillPoint(byte statType)
+    {
+        SendTCP(PacketCodec.EncodeSpendSkillPointReq(statType));
     }
 
     // ─── Private — Send ───────────────────────────────────────────────────────

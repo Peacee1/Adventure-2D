@@ -158,6 +158,34 @@ public class StatsManager : MonoBehaviour
         SetText(attackSpeedText, $"ASPD:          {session.AttackSpeed:F2}s");
     }
 
+    // ── Stat Upgrade API (1 Skill Point per upgrade) ──────────────────────────
+
+    /// <summary>Upgrades MaxHP by +100 (costs 1 Skill Point).</summary>
+    public void UpgradeHP()          => RequestUpgrade(0);
+
+    /// <summary>Upgrades MaxMP by +100 (costs 1 Skill Point).</summary>
+    public void UpgradeMP()          => RequestUpgrade(1);
+
+    /// <summary>Upgrades ATK Physical by +10 (costs 1 Skill Point).</summary>
+    public void UpgradeATKPhysical() => RequestUpgrade(2);
+
+    /// <summary>Upgrades ATK Magic by +10 (costs 1 Skill Point).</summary>
+    public void UpgradeATKMagic()    => RequestUpgrade(3);
+
+    /// <summary>Upgrades DEF Physical by +10 AND DEF Magic by +10 (costs 1 Skill Point).</summary>
+    public void UpgradeDEF()         => RequestUpgrade(4);
+
+    private void RequestUpgrade(byte statType)
+    {
+        var session = GameSession.Instance;
+        if (session == null || session.SkillPoints < 1)
+        {
+            Debug.LogWarning("[StatsManager] Cannot upgrade stat: Not enough skill points!");
+            return;
+        }
+        NetworkManager.Instance?.SendSpendSkillPoint(statType);
+    }
+
     // ── Auto-wiring ───────────────────────────────────────────────────────────
 
     private void AutoWireReferences()
@@ -177,8 +205,34 @@ public class StatsManager : MonoBehaviour
         lifeStealText   ??= FindTMP("LifeSteal");
         attackSpeedText ??= FindTMP("ASPD");
 
+        WireButton("PlusHP",          UpgradeHP);
+        WireButton("PlusMP",          UpgradeMP);
+        WireButton("PlusATKP",        UpgradeATKPhysical);
+        WireButton("PlusATKM",        UpgradeATKMagic);
+        WireButton("PlusDEF",         UpgradeDEF);
+
+        WireButton("BtnHP",           UpgradeHP);
+        WireButton("BtnMP",           UpgradeMP);
+        WireButton("BtnATKPhysical",  UpgradeATKPhysical);
+        WireButton("BtnATKMagic",     UpgradeATKMagic);
+        WireButton("BtnDEF",          UpgradeDEF);
+
         Debug.Log($"[StatsManager] Auto-wire done: title={titleText != null} sp={skillPointsText != null} " +
                   $"hp={maxHPText != null} mp={maxMPText != null} atk={atkPhysicalText != null}");
+    }
+
+    private void WireButton(string childName, UnityEngine.Events.UnityAction action)
+    {
+        var btnTransform = _panel.Find(childName);
+        if (btnTransform != null)
+        {
+            var btn = btnTransform.GetComponent<Button>();
+            if (btn != null)
+            {
+                btn.onClick.RemoveListener(action);
+                btn.onClick.AddListener(action);
+            }
+        }
     }
 
     private TMP_Text FindTMP(string childName)

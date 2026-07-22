@@ -515,4 +515,54 @@ public static class PacketDecoder
             NewSkillPoints = r.ReadUInt32(),
         };
     }
+
+    // ── Spend Skill Point Packets ──────────────────────────────────────────
+
+    public struct SpendSkillPointAckPacket
+    {
+        public bool   Success;
+        public byte   FailReason;
+        public uint   NewSkillPoints;
+        public ushort NewMaxHP;
+        public ushort NewMaxMP;
+        public ushort NewATKPhysical;
+        public ushort NewATKMagic;
+        public ushort NewDEFPhysical;
+        public ushort NewDEFMagic;
+    }
+
+    public static byte[] EncodeSpendSkillPointReq(byte statType)
+    {
+        using var ms = new MemoryStream();
+        using var w  = new BinaryWriter(ms);
+        w.Write(statType); // 0=HP, 1=MP, 2=ATKPhy, 3=ATKMag, 4=DEF
+        return EncodeFrame((ushort)PacketType.SpendSkillPointReq, ms.ToArray());
+    }
+
+    public static SpendSkillPointAckPacket DecodeSpendSkillPointAck(byte[] payload)
+    {
+        using var r = new BinaryReader(new MemoryStream(payload));
+        bool success = r.ReadByte() != 0;
+        byte reason  = r.ReadByte();
+        if (!success)
+        {
+            return new SpendSkillPointAckPacket
+            {
+                Success    = false,
+                FailReason = reason
+            };
+        }
+        return new SpendSkillPointAckPacket
+        {
+            Success        = true,
+            FailReason     = reason,
+            NewSkillPoints = r.ReadUInt32(),
+            NewMaxHP       = r.ReadUInt16(),
+            NewMaxMP       = r.ReadUInt16(),
+            NewATKPhysical = r.ReadUInt16(),
+            NewATKMagic    = r.ReadUInt16(),
+            NewDEFPhysical = r.ReadUInt16(),
+            NewDEFMagic    = r.ReadUInt16()
+        };
+    }
 }
